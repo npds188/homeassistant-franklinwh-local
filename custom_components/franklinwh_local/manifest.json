@@ -1,0 +1,13 @@
+{
+  "domain": "franklinwh_local",
+  "name": "FranklinWH Local",
+  "codeowners": ["@npds188"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/npds188/homeassistant-franklinwh-local",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/npds188/homeassistant-franklinwh-local/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
