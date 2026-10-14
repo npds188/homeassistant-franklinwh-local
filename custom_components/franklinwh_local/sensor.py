@@ -1,7 +1,7 @@
 """Sensors for FranklinWH Local."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -41,7 +41,10 @@ from .const import (
     CMD_SOLAR_PV,
     CMD_TOU_SCHEDULE,
     GENERATOR_STATES,
+    MOD_CIRCUITS,
+    MOD_GENERATOR,
     MODE_TYPES,
+    MODULE_ENTITY_KEYS,
 )
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription, num
@@ -234,6 +237,10 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
     ),
 )
 
+# Entities that only exist when the optional module is installed.
+_MODULE_OF = {key: module for module, keys in MODULE_ENTITY_KEYS.items() for key in keys}
+GATEWAY_SENSORS = tuple(replace(d, module=_MODULE_OF.get(d.key)) for d in GATEWAY_SENSORS)
+
 APOWER_SENSORS: tuple[AgateSensorDescription, ...] = (
     AgateSensorDescription(
         key="battery_health", name="Battery health", tier="detail", cmd=CMD_BATTERY_CELLS, per_device=True,
@@ -312,6 +319,36 @@ class AgateSensor(AgateEntity, SensorEntity):
 def _mode_types(rt: AgateRuntime) -> dict[int, dict[str, Any]]:
     modes = ((rt.config.data or {}).get(CMD_MODE_LIST) or {}).get("list") or []
     return {int(m["id"]): m for m in modes if isinstance(m, dict) and "id" in m}
+
+
+class ModulesSensor(AgateEntity, SensorEntity):
+    """Which optional modules were found, and how (override / cloud / local)."""
+
+    _attr_icon = "mdi:puzzle"
+
+    def __init__(self, rt: AgateRuntime) -> None:
+        super().__init__(
+            rt,
+            AgateSensorDescription(key="installed_modules", name="Installed modules", tier="static",
+                                   cmd=CMD_INSTALL_PROFILE, value_fn=lambda d: d, entity_category=DIAG),
+        )
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> str:
+        found = [MODULE_LABELS[m] for m, s in self.rt.modules.items() if s.installed]
+        return ", ".join(found) if found else "None"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {MODULE_LABELS[m]: {"installed": s.installed, "source": s.source, "detail": s.detail}
+                for m, s in self.rt.modules.items()}
+
+
+MODULE_LABELS = {MOD_GENERATOR: "Generator", MOD_CIRCUITS: "Smart Circuits"}
 
 
 class OperatingModeSensor(AgateEntity, SensorEntity):
@@ -410,7 +447,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS]
+    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS if rt.has(d.module)]
+    entities.append(ModulesSensor(rt))
     entities.append(OperatingModeSensor(rt))
     entities.append(GridStatusSensor(rt))
     entities += [ModeReserveSensor(rt, mid, m.get("name", str(mid))) for mid, m in _mode_types(rt).items()]

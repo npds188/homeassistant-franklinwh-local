@@ -5,7 +5,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .client import DEFAULT_PORT, AgateClient, AgateError
 from .const import (
@@ -15,10 +15,13 @@ from .const import (
     DEFAULT_CONFIG_INTERVAL,
     DEFAULT_DETAIL_INTERVAL,
     DEFAULT_FAST_INTERVAL,
+    MOD_CIRCUITS,
+    MOD_GENERATOR,
     STATIC_INTERVAL,
 )
 from .coordinator import AgateRuntime, build_coordinators, discover_devices
 from .entity import agate_device
+from .modules import detect_modules, stale_module_unique_ids
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.SELECT,
              Platform.NUMBER, Platform.TIME, Platform.BUTTON]
@@ -36,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
     devices = await discover_devices(client)
     device_ids = sorted(devices)
     opts = entry.options
+    modules = await detect_modules(hass, client, identity, dict(opts))
     fast, detail, config, static = build_coordinators(
         hass,
         entry,
@@ -45,6 +49,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         opts.get(CONF_DETAIL_INTERVAL, DEFAULT_DETAIL_INTERVAL),
         opts.get(CONF_CONFIG_INTERVAL, DEFAULT_CONFIG_INTERVAL),
         STATIC_INTERVAL,
+        generator=modules[MOD_GENERATOR].installed,
+        circuits=modules[MOD_CIRCUITS].installed,
     )
     # The fast tier must work for setup to succeed; the others may come later.
     await fast.async_config_entry_first_refresh()
@@ -62,12 +68,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         config=config,
         static=static,
         coordinators=[fast, detail, config, static],
+        modules=modules,
     )
     # Register the aGate first so aPower devices can link to it by registry id.
     agate = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **agate_device(entry.runtime_data))
     entry.runtime_data.agate_device_id = agate.id
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Remove the entities of modules now decided not installed. Only module-owned
+    # entities are touched; everything else is left alone.
+    ent_reg = er.async_get(hass)
+    reg_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+    stale = set(stale_module_unique_ids(entry.runtime_data.serial, [e.unique_id for e in reg_entries], modules))
+    for reg_entry in reg_entries:
+        if reg_entry.unique_id in stale:
+            ent_reg.async_remove(reg_entry.entity_id)
     return True
 
 

@@ -52,6 +52,11 @@ async def main(host):
         config=StubCoordinator(await fetch(client, (CMD_MODE_LIST, *CONFIG_CMDS))),
         static=StubCoordinator(await fetch(client, STATIC_CMDS, STATIC_DEVICE_CMDS, ids)),
     )
+    from franklinwh_local.modules import detect_local, ModuleStatus  # noqa: PLC0415
+    rt.modules = await detect_local(client, identity)
+    if os.environ.get("MODULES") == "none":   # simulate a site without the optional modules
+        rt.modules = {m: ModuleStatus(False, "override", "test") for m in rt.modules}
+    print("modules:", {m: (s.installed, s.source, s.detail) for m, s in rt.modules.items()})
     entry = types.SimpleNamespace(runtime_data=rt)
     added = []
     await sensor.async_setup_entry(None, entry, added.extend)

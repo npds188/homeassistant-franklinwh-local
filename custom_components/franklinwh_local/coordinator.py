@@ -33,6 +33,8 @@ from .const import (
     STATIC_DEVICE_CMDS,
 )
 
+from .modules import skipped_commands
+
 _LOGGER = logging.getLogger(__name__)
 
 # Coordinator data: {cmd: dataArea} for whole-gateway reads and
@@ -142,6 +144,13 @@ class AgateRuntime:
     static: AgateCoordinator
     coordinators: list[AgateCoordinator] = field(default_factory=list)
     agate_device_id: str | None = None
+    # Optional modules -> ModuleStatus (see modules.py)
+    modules: dict[str, Any] = field(default_factory=dict)
+
+    def has(self, module: str | None) -> bool:
+        """True if the entity's module is installed (or it belongs to no module)."""
+        status = self.modules.get(module) if module else None
+        return status is None or status.installed
 
 
 async def discover_devices(client: AgateClient) -> dict[int, str]:
@@ -169,13 +178,19 @@ def build_coordinators(
     detail_s: int,
     config_s: int,
     static_s: int,
+    generator: bool = True,
+    circuits: bool = True,
 ) -> tuple[AgateCoordinator, AgateCoordinator, AgateCoordinator, AgateCoordinator]:
+    # Don't poll data for modules that aren't installed.
+    skip = skipped_commands(generator, circuits)
     fast = AgateCoordinator(hass, entry, client, "fast", fast_s, FAST_CMDS)
     detail = AgateCoordinator(
-        hass, entry, client, "detail", detail_s, DETAIL_CMDS, DETAIL_DEVICE_CMDS, device_ids, partial_ok=True
+        hass, entry, client, "detail", detail_s, tuple(c for c in DETAIL_CMDS if c not in skip),
+        DETAIL_DEVICE_CMDS, device_ids, partial_ok=True
     )
     config = AgateCoordinator(
-        hass, entry, client, "config", config_s, (CMD_MODE_LIST, *CONFIG_CMDS), partial_ok=True
+        hass, entry, client, "config", config_s,
+        (CMD_MODE_LIST, *(c for c in CONFIG_CMDS if c not in skip)), partial_ok=True
     )
     static = AgateCoordinator(
         hass, entry, client, "static", static_s, STATIC_CMDS, STATIC_DEVICE_CMDS, device_ids, partial_ok=True

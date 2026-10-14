@@ -37,6 +37,8 @@ class AgateEntityDescription(EntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
     attrs_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     per_device: bool = False
+    # Optional module this entity belongs to (MOD_GENERATOR / MOD_CIRCUITS); None = always
+    module: str | None = None
 
 
 def agate_device(rt: AgateRuntime) -> DeviceInfo:

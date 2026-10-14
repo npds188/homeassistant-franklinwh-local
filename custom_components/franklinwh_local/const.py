@@ -9,6 +9,37 @@ CONF_FAST_INTERVAL = "fast_interval"
 CONF_DETAIL_INTERVAL = "detail_interval"
 CONF_CONFIG_INTERVAL = "config_interval"
 
+# Optional modules: how each is decided (see modules.py)
+CONF_GENERATOR_MODULE = "generator_module"
+CONF_CIRCUITS_MODULE = "smart_circuits_module"
+MODULE_AUTO, MODULE_INSTALLED, MODULE_NOT_INSTALLED = "auto", "installed", "not_installed"
+MODULE_CHOICES = [MODULE_AUTO, MODULE_INSTALLED, MODULE_NOT_INSTALLED]
+MOD_GENERATOR, MOD_CIRCUITS = "generator", "smart_circuits"
+
+# Entity description keys owned by each optional module. Used both to decide which
+# entities to create and, on reload, which entities to remove when a module is set to
+# not installed. Nothing outside these sets is ever removed automatically.
+MODULE_ENTITY_KEYS = {
+    MOD_GENERATOR: frozenset({
+        "generator_power", "generator_state", "generator_voltage", "generator_frequency",
+        "generator_current", "v2l_power",
+        "generator_running", "generator_enabled", "generator_relay_welded", "generator_relay_open_fault",
+        "generator_mode", "generator_auto_start_soc", "generator_auto_stop_soc", "generator_run", "generator_stop",
+        *(f"generator_period_{n}" for n in (1, 2, 3)),
+        *(f"generator_period_{n}_{e}" for n in (1, 2, 3) for e in ("start", "end")),
+    }),
+    MOD_CIRCUITS: frozenset({
+        "circuit_voltage", "circuit_1_power", "circuit_2_power",
+        *(f"smart_circuit_{n}" for n in (1, 2, 3)),
+        *(f"smart_circuit_{n}_switch" for n in (1, 2, 3)),
+    }),
+}
+
+# Optional cloud check of the account's accessory list (setup/reload only)
+CONF_CLOUD_CHECK = "cloud_check"
+CONF_CLOUD_USERNAME = "cloud_username"
+CONF_CLOUD_PASSWORD = "cloud_password"
+
 DEFAULT_FAST_INTERVAL = 5  # s — power flow + grid electrical
 DEFAULT_DETAIL_INTERVAL = 60  # s — battery cells, generator, circuits, faults
 DEFAULT_CONFIG_INTERVAL = 900  # s — modes/reserves, schedules, settings

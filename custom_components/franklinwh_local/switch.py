@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import AgateConfigEntry
 from .client import AgateError
-from .const import CMD_RUN_STATUS, CMD_SMART_CIRCUITS
+from .const import CMD_RUN_STATUS, CMD_SMART_CIRCUITS, MOD_CIRCUITS, MOD_GENERATOR
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription
 from .generator import PERIODS, GeneratorPeriodSwitch
@@ -102,4 +102,9 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    async_add_entities([SmartCircuitSwitch(rt, n) for n in (1, 2, 3)] + [GeneratorPeriodSwitch(rt, n) for n in PERIODS])
+    entities: list[SwitchEntity] = []
+    if rt.has(MOD_CIRCUITS):
+        entities += [SmartCircuitSwitch(rt, n) for n in (1, 2, 3)]
+    if rt.has(MOD_GENERATOR):
+        entities += [GeneratorPeriodSwitch(rt, n) for n in PERIODS]
+    async_add_entities(entities)
