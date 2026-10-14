@@ -17,6 +17,7 @@ import asyncio
 import json
 import time
 import zlib
+from collections.abc import Callable
 from typing import Any
 
 DEFAULT_PORT = 9000
@@ -92,8 +93,15 @@ class AgateClient:
         )
         return env.replace('"DATA"', raw)
 
-    async def request(self, cmd: int, data: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Send one request and return the reply's dataArea."""
+    async def request(
+        self, cmd: int, data: dict[str, Any] | None = None, *, allow_error_result: bool = False
+    ) -> dict[str, Any]:
+        """Send one request and return the reply's dataArea.
+
+        A reply whose dataArea.result is non-zero is an error and raises AgateError,
+        unless allow_error_result is set: a few reads (1101 identity, 1105 device list)
+        answer result 1 while still carrying valid data.
+        """
         equip_no = self.equip_no or LOGIN_EQUIP_NO
         frame = encode_frame(self._build(cmd, data or {"opt": 0}, equip_no), equip_no)
         async with self._lock:
@@ -110,7 +118,19 @@ class AgateClient:
         area = reply.get("dataArea")
         if not isinstance(area, dict):
             raise AgateError(f"cmd {cmd}: reply has no dataArea")
+        if not allow_error_result and area.get("result") not in (0, None):
+            raise AgateError(f"cmd {cmd}: aGate returned result {area.get('result')}, "
+                             f"reason {area.get('reason')}")
         return area
+
+    async def _read_block(self, cmd: int, required: tuple[str, ...]) -> dict[str, Any]:
+        """Read a full config block for a read-modify-write; refuse an incomplete one."""
+        block = {k: v for k, v in (await self.request(cmd, {"opt": 0})).items()
+                 if k not in ("opt", "result", "reason")}
+        missing = [k for k in required if k not in block]
+        if missing:
+            raise AgateError(f"cmd {cmd}: config block incomplete (missing {', '.join(missing)}); not writing")
+        return block
 
     async def _exchange(self, frame: bytes) -> dict[str, Any]:
         reader, writer = await asyncio.open_connection(self.host, self.port)
@@ -138,7 +158,7 @@ class AgateClient:
             return await self._set_smart_circuit(circuit, on)
 
     async def _set_smart_circuit(self, circuit: int, on: bool) -> dict[str, Any]:
-        """Switch smart circuit 1-3 on/off (cmd 1409, opt 1) — the only write.
+        """Switch smart circuit 1-3 on/off (cmd 1409, opt 1).
 
         Same recipe as the app / cloud library: read the full smart-circuit block,
         mark the target circuit(s) with MsgType=1, set Mode (1 = on) and
@@ -148,10 +168,8 @@ class AgateClient:
         """
         if circuit not in (1, 2, 3):
             raise ValueError(f"circuit must be 1, 2 or 3, not {circuit!r}")
-        block = {k: v for k, v in (await self.request(1409, {"opt": 0})).items()
-                 if k not in ("opt", "result", "reason")}
-        if f"Sw{circuit}Mode" not in block:
-            raise AgateError(f"smart circuit {circuit} not present in config block")
+        block = await self._read_block(1409, ("SwMerge", f"Sw{circuit}Mode", f"Sw{circuit}MsgType",
+                                              f"Sw{circuit}ProLoad", f"Sw{circuit}Name"))
         targets = [1, 2] if block.get("SwMerge") == 1 and circuit in (1, 2) else [circuit]
         mode = 1 if on else 0
         for i in (1, 2, 3):
@@ -177,20 +195,31 @@ class AgateClient:
     )
     # Commands: the aGate acts on them and may not echo them back.
     GENERATOR_COMMANDS = ("manuSw",)
+    # A 1901 block must carry these before it is written back.
+    GENERATOR_REQUIRED = ("genEn", "mode", "genStat", "genStartElec", "genCloseElec", "manuSw",
+                          "charge1En", "charge1StartTime", "charge1EndTime",
+                          "charge2En", "charge2StartTime", "charge2EndTime",
+                          "charge3En", "charge3StartTime", "charge3EndTime")
 
-    async def set_generator(self, **changes: Any) -> dict[str, Any]:
+    async def set_generator(
+        self, changes: dict[str, Any], validate: Callable[[dict[str, Any]], None] | None = None
+    ) -> dict[str, Any]:
         """Change generator settings (cmd 1901, opt 1) by full-block read-modify-write.
 
-        Reads the whole block, applies only `changes`, writes it back, then re-reads and
-        raises if any (non-command) field did not take. Returns the re-read block.
+        Under the write lock: read the current block, merge `changes`, run `validate` on
+        the merged block (it raises to refuse), write the whole block, then re-read and
+        raise if any non-command field did not take. Validating the fresh block (not a
+        cached copy) means a change made elsewhere meanwhile can't slip an invalid
+        combination through. Returns the re-read block.
         """
         unknown = set(changes) - set(self.GENERATOR_WRITABLE)
         if unknown:
             raise ValueError(f"not writable: {sorted(unknown)}")
         async with self.write_lock:
-            block = {k: v for k, v in (await self.request(1901, {"opt": 0})).items()
-                     if k not in ("opt", "result", "reason")}
+            block = await self._read_block(1901, self.GENERATOR_REQUIRED)
             block.update(changes)
+            if validate is not None:
+                validate(block)
             reply = await self.request(1901, {"opt": 1, **block})
             if reply.get("result") not in (0, None):
                 raise AgateError(f"aGate refused generator change: result {reply.get('result')}, "
@@ -216,7 +245,8 @@ class AgateClient:
 
     async def identify(self) -> dict[str, Any]:
         """Firmware/serial manifest (cmd 1101); also learns the gateway serial."""
-        info = await self.request(1101, {"opt": 0})
+        # 1101 answers result 1 / reason -2 while carrying the full manifest.
+        info = await self.request(1101, {"opt": 0}, allow_error_result=True)
         serial = info.get("IBG_SN")
         if not serial:
             raise AgateError("aGate did not report a serial number")

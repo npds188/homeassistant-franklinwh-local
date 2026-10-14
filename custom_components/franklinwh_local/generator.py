@@ -3,11 +3,14 @@
 Mirrors the app's Generator page: Manual / Auto Schedule, the Auto operating range
 (start/stop SOC), up to three daily operating periods, and the manual Run/Stop
 command. All writes go through AgateClient.set_generator (full-block
-read-modify-write, verified by re-read).
+read-modify-write, verified by re-read). Every check below runs inside the client's
+write lock on the freshly read block merged with the change, right before it is sent,
+so a change made elsewhere in the meantime can't slip an invalid combination through.
 """
 from __future__ import annotations
 
 from datetime import time as dtime
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.button import ButtonEntity
@@ -60,6 +63,21 @@ def check_periods(block: dict[str, Any]) -> None:
                 raise ServiceValidationError(f"Generator periods {a} and {b} overlap (keep at least 1 minute apart)")
 
 
+def check_soc_range(block: dict[str, Any]) -> None:
+    start, stop = int(block.get("genStartElec", 0)), int(block.get("genCloseElec", 100))
+    if start >= stop:
+        raise ServiceValidationError(f"Generator start SOC ({start}%) must be below stop SOC ({stop}%)")
+
+
+def check_manual(command: int) -> Callable[[dict[str, Any]], None]:
+    def check(block: dict[str, Any]) -> None:
+        if block.get("mode") != MODE_VALUES[MODE_MANUAL]:
+            raise ServiceValidationError("Switch Generator mode to Manual before starting or stopping it by hand")
+        if command == RUN and int(block.get("genEn") or 0) != 1:
+            raise ServiceValidationError("Generator is not enabled on the aGate")
+    return check
+
+
 class GeneratorEntity(AgateEntity):
     """Bound to the generator block (detail tier); writes refresh it immediately."""
 
@@ -67,9 +85,10 @@ class GeneratorEntity(AgateEntity):
     def gen(self) -> dict[str, Any]:
         return self.reply or {}
 
-    async def _write(self, **changes: Any) -> None:
+    async def _write(self, changes: dict[str, Any],
+                     validate: Callable[[dict[str, Any]], None] | None = None) -> None:
         try:
-            post = await self.rt.client.set_generator(**changes)
+            post = await self.rt.client.set_generator(changes, validate)
         except (AgateError, ValueError) as err:
             raise HomeAssistantError(f"Generator: {err}") from err
         data = dict(self.rt.detail.data or {})
@@ -90,7 +109,7 @@ class GeneratorModeSelect(GeneratorEntity, SelectEntity):
         return next((k for k, n in MODE_VALUES.items() if n == v), None)
 
     async def async_select_option(self, option: str) -> None:
-        await self._write(mode=MODE_VALUES[option])
+        await self._write({"mode": MODE_VALUES[option]})
 
 
 class GeneratorSocNumber(GeneratorEntity, NumberEntity):
@@ -111,11 +130,7 @@ class GeneratorSocNumber(GeneratorEntity, NumberEntity):
         return float(v) if v is not None else None
 
     async def async_set_native_value(self, value: float) -> None:
-        start = int(value) if self.field == "genStartElec" else int(self.gen.get("genStartElec", 0))
-        stop = int(value) if self.field == "genCloseElec" else int(self.gen.get("genCloseElec", 100))
-        if start >= stop:
-            raise ServiceValidationError(f"Generator start SOC ({start}%) must be below stop SOC ({stop}%)")
-        await self._write(**{self.field: int(value)})
+        await self._write({self.field: int(value)}, check_soc_range)
 
 
 class GeneratorPeriodSwitch(GeneratorEntity, SwitchEntity):
@@ -135,11 +150,10 @@ class GeneratorPeriodSwitch(GeneratorEntity, SwitchEntity):
         return {"start": self.gen.get(f"charge{self.n}StartTime"), "end": self.gen.get(f"charge{self.n}EndTime")}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        check_periods({**self.gen, f"charge{self.n}En": 1})
-        await self._write(**{f"charge{self.n}En": 1})
+        await self._write({f"charge{self.n}En": 1}, check_periods)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._write(**{f"charge{self.n}En": 0})
+        await self._write({f"charge{self.n}En": 0})
 
 
 class GeneratorPeriodTime(GeneratorEntity, TimeEntity):
@@ -160,8 +174,7 @@ class GeneratorPeriodTime(GeneratorEntity, TimeEntity):
 
     async def async_set_value(self, value: dtime) -> None:
         hhmm = f"{value.hour:02d}:{value.minute:02d}"
-        check_periods({**self.gen, self.field: hhmm})
-        await self._write(**{self.field: hhmm})
+        await self._write({self.field: hhmm}, check_periods)
 
 
 class GeneratorCommandButton(GeneratorEntity, ButtonEntity):
@@ -175,8 +188,4 @@ class GeneratorCommandButton(GeneratorEntity, ButtonEntity):
                                    "Generator run" if run else "Generator stop"))
 
     async def async_press(self) -> None:
-        if self.gen.get("mode") != MODE_VALUES[MODE_MANUAL]:
-            raise ServiceValidationError("Switch Generator mode to Manual before starting or stopping it by hand")
-        if self.command == RUN and int(self.gen.get("genEn") or 0) != 1:
-            raise ServiceValidationError("Generator is not enabled on the aGate")
-        await self._write(manuSw=self.command)
+        await self._write({"manuSw": self.command}, check_manual(self.command))

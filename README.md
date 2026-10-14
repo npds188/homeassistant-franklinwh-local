@@ -119,6 +119,15 @@ venv/bin/python tests/live_entities.py <aGate IP>
 
 It only reads; it never sends a write.
 
+`tests/test_review_fixes.py` runs offline against a fake aGate (no device needed) and checks
+the write-path safety rules: error replies and incomplete blocks are never written back,
+generator checks run on the freshly read settings, and failed polls make entities
+unavailable.
+
+```bash
+venv/bin/python tests/test_review_fixes.py
+```
+
 ## Credits
 
 - **Claude** (Anthropic) — wrote this integration, the protocol notes and the documentation,

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -72,8 +73,12 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
         self.cmds = cmds
         self.device_cmds = device_cmds
         self.device_ids = device_ids or [1]
-        # Slow tiers keep whatever they did get if one command fails.
+        # Slow tiers tolerate individual commands failing (see _async_update_data).
         self.partial_ok = partial_ok
+        # A command that fails keeps its last good reply for this long, then its
+        # entities go unavailable; a poll where every command fails is an UpdateFailed.
+        self.grace = 2 * interval
+        self._last_ok: dict[Any, float] = {}
 
     async def _async_update_data(self) -> AgateData:
         data: AgateData = {}
@@ -87,6 +92,8 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
             for cmd in self.device_cmds
             for dev in self.device_ids
         ]
+        now = time.monotonic()
+        succeeded = 0
         for key, cmd, payload in requests:
             try:
                 reply = await self.client.request(cmd, payload)
@@ -95,16 +102,20 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
                     # energy dashboard's daily counters and double-count the day.
                     raise AgateError("power flow reply is all zeros (ignored)")
                 data[key] = reply
+                self._last_ok[key] = now
+                succeeded += 1
             except AgateError as err:
                 if not self.partial_ok:
                     raise UpdateFailed(str(err)) from err
                 errors.append(str(err))
-                if self.data and key in self.data:
-                    data[key] = self.data[key]  # keep the last good value
+                # Bridge a brief failure with the last good reply; once it is older
+                # than the grace period, drop it so those entities go unavailable.
+                if self.data and key in self.data and now - self._last_ok.get(key, 0) <= self.grace:
+                    data[key] = self.data[key]
         if errors:
-            _LOGGER.debug("%s: partial update, %s", self.name, "; ".join(errors))
-            if not data:
+            if not succeeded:
                 raise UpdateFailed("; ".join(errors))
+            _LOGGER.debug("%s: partial update, %s", self.name, "; ".join(errors))
         return data
 
 
@@ -128,7 +139,8 @@ class AgateRuntime:
 async def discover_devices(client: AgateClient) -> dict[int, str]:
     """aPower device ids -> serials, from the device check list (1105)."""
     try:
-        info = await client.request(CMD_DEVICE_CHECK, {"opt": 0})
+        # 1105 answers result 1 / reason 4 while carrying the device list.
+        info = await client.request(CMD_DEVICE_CHECK, {"opt": 0}, allow_error_result=True)
     except AgateError as err:
         _LOGGER.warning("Could not list aPower devices (%s); assuming one", err)
         return {1: ""}
