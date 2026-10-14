@@ -1,0 +1,25 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "FranklinWH aGate (local)",
+        "description": "Read-only local polling of the aGate over its Direct Connect socket (TCP 9000). Enter the aGate's LAN IP address.",
+        "data": { "host": "aGate IP address", "port": "Port" }
+      }
+    },
+    "error": { "cannot_connect": "Could not reach the aGate on that address and port." },
+    "abort": { "already_configured": "This aGate is already configured." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Polling intervals (seconds)",
+        "data": {
+          "fast_interval": "Power flow and grid (default 5)",
+          "detail_interval": "Battery cells, generator, circuits, faults (default 60)",
+          "config_interval": "Modes, reserves and settings (default 900)"
+        }
+      }
+    }
+  }
+}
