@@ -20,6 +20,23 @@ generator.
 > at any time. Provided as-is; use at your own risk, and don't contact FranklinWH support
 > about it.
 
+## Security — read this first
+
+The aGate's local interface has **no authentication**. Anything on your network that can
+reach the aGate on **TCP port 9000** can read it *and* control it — change the battery mode,
+switch smart circuits, change generator settings, go off-grid and more. The message encoding
+is obfuscation, not encryption: its key is derived from the gateway serial, which the aGate
+reports to anyone who asks. The Hotspot/Bluetooth password does not protect this listener.
+This is how the aGate firmware works, not something this integration adds, and the protocol
+is already public; but please treat the aGate as an unprotected control endpoint:
+
+- **Put the aGate on its own VLAN** and allow **only your Home Assistant host** to reach it on
+  TCP 9000 (plus outbound internet if you still use the FranklinWH app/cloud). A firewall rule
+  alone does not help on a flat network: devices on the same subnet reach each other directly.
+- Never expose port 9000 to the internet (no port forwarding).
+- Home Assistant becomes a control point for the aGate — keep its accounts and remote access
+  secured.
+
 ## What you get
 
 | | Updated | Entities |
