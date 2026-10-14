@@ -8,7 +8,6 @@ library use.
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 import aiohttp
 
@@ -40,11 +39,14 @@ async def _login(session: aiohttp.ClientSession, account: str, password: str) ->
             js = await resp.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError, ValueError) as err:
         raise CloudError(f"login request failed: {err}") from err
+    if not isinstance(js, dict):
+        raise CloudError("login reply was not a JSON object")
     code = js.get("code")
     if code in (400, 401):
         raise CloudAuthError(js.get("message") or "login refused")
-    token = (js.get("result") or {}).get("token")
-    if code != 200 or not token:
+    result = js.get("result")
+    token = result.get("token") if isinstance(result, dict) else None
+    if code != 200 or not isinstance(token, str) or not token:
         raise CloudError(f"login failed: {js.get('code')} {js.get('message')}")
     return token
 
@@ -61,9 +63,23 @@ async def accessory_types(session: aiohttp.ClientSession, account: str, password
             js = await resp.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError, ValueError) as err:
         raise CloudError(f"accessory list request failed: {err}") from err
+    if not isinstance(js, dict):
+        raise CloudError("accessory list reply was not a JSON object")
     if js.get("code") != 200:
         raise CloudError(f"accessory list failed: {js.get('code')} {js.get('message')}")
-    items: list[dict[str, Any]] = js.get("result") or []
-    return {int(a["accessoryType"]) for a in items
-            if isinstance(a, dict) and a.get("accessoryType") is not None
-            and str(a.get("id", gateway)) == gateway}
+    items = js.get("result")
+    if items is None:
+        items = []      # an account without accessories may report none at all
+    if not isinstance(items, list):
+        raise CloudError("accessory list reply had no list of accessories")
+    types: set[int] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise CloudError("accessory list entry was not an object")
+        if str(item.get("id", gateway)) != gateway:
+            continue    # another gateway on the same account
+        try:
+            types.add(int(item["accessoryType"]))
+        except (KeyError, TypeError, ValueError) as err:
+            raise CloudError(f"accessory list entry has no valid accessoryType ({err})") from err
+    return types

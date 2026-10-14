@@ -23,6 +23,7 @@ from .const import (
     CMD_SMART_CIRCUITS,
     MOD_CIRCUITS,
     MOD_GENERATOR,
+    MODULE_ENTITY_KEYS,
 )
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription, num
@@ -88,8 +89,8 @@ BINARY_SENSORS: tuple[AgateBinaryDescription, ...] = (
 )
 
 
-_GENERATOR_KEYS = {"generator_running", "generator_enabled", "generator_relay_welded", "generator_relay_open_fault"}
-BINARY_SENSORS = tuple(replace(d, module=MOD_GENERATOR) if d.key in _GENERATOR_KEYS else d for d in BINARY_SENSORS)
+BINARY_SENSORS = tuple(replace(d, module=MOD_GENERATOR) if d.key in MODULE_ENTITY_KEYS[MOD_GENERATOR] else d
+                       for d in BINARY_SENSORS)
 
 
 class AgateBinarySensor(AgateEntity, BinarySensorEntity):

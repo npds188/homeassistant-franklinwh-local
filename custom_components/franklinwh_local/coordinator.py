@@ -20,12 +20,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .client import AgateClient, AgateError
 from .const import (
-    CMD_CIRCUIT_METER,
     CMD_DEVICE_CHECK,
-    CMD_GENERATOR,
     CMD_MODE_LIST,
     CMD_POWER_FLOW,
-    CMD_SMART_CIRCUITS,
     CONFIG_CMDS,
     DETAIL_CMDS,
     DETAIL_DEVICE_CMDS,
@@ -35,6 +32,8 @@ from .const import (
     STATIC_CMDS,
     STATIC_DEVICE_CMDS,
 )
+
+from .modules import skipped_commands
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,8 +146,6 @@ class AgateRuntime:
     agate_device_id: str | None = None
     # Optional modules -> ModuleStatus (see modules.py)
     modules: dict[str, Any] = field(default_factory=dict)
-    # unique_ids of every entity created this setup (stale ones are removed afterwards)
-    created_uids: set[str] = field(default_factory=set)
 
     def has(self, module: str | None) -> bool:
         """True if the entity's module is installed (or it belongs to no module)."""
@@ -185,7 +182,7 @@ def build_coordinators(
     circuits: bool = True,
 ) -> tuple[AgateCoordinator, AgateCoordinator, AgateCoordinator, AgateCoordinator]:
     # Don't poll data for modules that aren't installed.
-    skip = ({CMD_GENERATOR} if not generator else set()) | ({CMD_CIRCUIT_METER, CMD_SMART_CIRCUITS} if not circuits else set())
+    skip = skipped_commands(generator, circuits)
     fast = AgateCoordinator(hass, entry, client, "fast", fast_s, FAST_CMDS)
     detail = AgateCoordinator(
         hass, entry, client, "detail", detail_s, tuple(c for c in DETAIL_CMDS if c not in skip),

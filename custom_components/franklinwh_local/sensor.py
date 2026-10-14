@@ -44,6 +44,7 @@ from .const import (
     MOD_CIRCUITS,
     MOD_GENERATOR,
     MODE_TYPES,
+    MODULE_ENTITY_KEYS,
 )
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription, num
@@ -237,11 +238,7 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
 )
 
 # Entities that only exist when the optional module is installed.
-_MODULE_OF = {
-    "generator_power": MOD_GENERATOR, "generator_state": MOD_GENERATOR, "generator_voltage": MOD_GENERATOR,
-    "generator_frequency": MOD_GENERATOR, "generator_current": MOD_GENERATOR, "v2l_power": MOD_GENERATOR,
-    "circuit_voltage": MOD_CIRCUITS, "circuit_1_power": MOD_CIRCUITS, "circuit_2_power": MOD_CIRCUITS,
-}
+_MODULE_OF = {key: module for module, keys in MODULE_ENTITY_KEYS.items() for key in keys}
 GATEWAY_SENSORS = tuple(replace(d, module=_MODULE_OF.get(d.key)) for d in GATEWAY_SENSORS)
 
 APOWER_SENSORS: tuple[AgateSensorDescription, ...] = (

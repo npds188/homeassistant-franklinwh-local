@@ -83,6 +83,93 @@ async def main():
     r = await modules.detect_modules(None, gen_off, no_circuits, {"generator_module": "auto"})
     check("auto with no cloud -> local result", r[MOD_GENERATOR].source == "local")
 
+    # ---- round 3: clean-up scope, V2L polling, entity/key consistency, cloud parsing ----
+    from franklinwh_local.cloud import CloudError, accessory_types as real_accessory_types
+    from franklinwh_local.const import MODULE_ENTITY_KEYS
+    from franklinwh_local.modules import ModuleStatus, skipped_commands, stale_module_unique_ids
+
+    S = "SER"
+    regs = [f"{S}_solar_power", f"{S}_reserve_83132", f"{S}_battery_health_apower2", f"{S}_installed_modules",
+            f"{S}_generator_mode", f"{S}_generator_period_2_end", f"{S}_v2l_power",
+            f"{S}_smart_circuit_1_switch", f"{S}_circuit_voltage", "OTHER_generator_mode"]
+    gen_off = {MOD_GENERATOR: ModuleStatus(False, "override", ""), MOD_CIRCUITS: ModuleStatus(True, "local", "")}
+    stale = stale_module_unique_ids(S, regs, gen_off)
+    check("cleanup: only the absent generator's own entities are removed",
+          sorted(stale) == sorted([f"{S}_generator_mode", f"{S}_generator_period_2_end", f"{S}_v2l_power"]))
+    both_on = {m: ModuleStatus(True, "local", "") for m in (MOD_GENERATOR, MOD_CIRCUITS)}
+    check("cleanup: nothing removed when both modules are installed", stale_module_unique_ids(S, regs, both_on) == [])
+    check("cleanup: core entities (reserves, other aPowers) are never candidates",
+          not {f"{S}_reserve_83132", f"{S}_battery_health_apower2", f"{S}_solar_power"} & set(
+              stale_module_unique_ids(S, regs, {m: ModuleStatus(False, "override", "") for m in both_on})))
+
+    check("V2L: generator only -> 1411 still polled", 1411 not in skipped_commands(True, False))
+    check("V2L: circuits only -> 1411 polled, 1901 skipped", skipped_commands(False, True) == {1901})
+    check("neither module -> 1901, 1409, 1411 skipped", skipped_commands(False, False) == {1901, 1409, 1411})
+
+    # Build every platform with stub data, with and without modules, and compare to the key map.
+    import types as _types
+    from franklinwh_local import binary_sensor, button, number, select, sensor, switch, time as time_pf
+    from franklinwh_local.coordinator import AgateRuntime
+
+    class Stub:
+        data, last_update_success = {}, True
+
+        def async_add_listener(self, *a, **k):
+            return lambda: None
+
+    async def build(mods):
+        rt = AgateRuntime(client=None, serial=S, identity={}, device_ids=[1], device_serials={1: ""},
+                          fast=Stub(), detail=Stub(), config=Stub(), static=Stub(), modules=mods)
+        added = []
+        entry = _types.SimpleNamespace(runtime_data=rt)
+        for plat in (sensor, binary_sensor, switch, select, number, time_pf, button):
+            await plat.async_setup_entry(None, entry, added.extend)
+        return added
+
+    on_list = await build(both_on)
+    off_list = await build({m: ModuleStatus(False, "override", "") for m in both_on})
+    keys_on = {e.entity_description.key for e in on_list}
+    keys_off = {e.entity_description.key for e in off_list}
+    all_module_keys = set().union(*MODULE_ENTITY_KEYS.values())
+    check("key map: every module key is a real entity (no typos)", all_module_keys <= keys_on)
+    check("key map: no module entity is created when modules are absent", not (all_module_keys & keys_off))
+    check("key map: absent modules remove exactly the mapped entities", keys_on - keys_off == all_module_keys)
+
+    # Cloud reply parsing with a fake aiohttp session.
+    class Resp:
+        def __init__(self, js): self.js = js
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def raise_for_status(self): pass
+        async def json(self, content_type=None): return self.js
+
+    class Session:
+        def __init__(self, acc): self.acc = acc
+        def post(self, *a, **k): return Resp({"code": 200, "result": {"token": "t"}})
+        def get(self, *a, **k): return Resp(self.acc)
+
+    async def cloud(acc):
+        try:
+            return await real_accessory_types(Session(acc), "a", "b", "GW")
+        except CloudError as err:
+            return err
+
+    check("cloud: non-object reply -> CloudError", isinstance(await cloud(["x"]), CloudError))
+    check("cloud: invalid accessoryType -> CloudError",
+          isinstance(await cloud({"code": 200, "result": [{"id": "GW", "accessoryType": "abc"}]}), CloudError))
+    check("cloud: result not a list -> CloudError", isinstance(await cloud({"code": 200, "result": {"x": 1}}), CloudError))
+    check("cloud: empty list is valid (no modules)", await cloud({"code": 200, "result": []}) == set())
+    check("cloud: other gateways on the account are ignored",
+          await cloud({"code": 200, "result": [{"id": "GW", "accessoryType": 3}, {"id": "OTHER", "accessoryType": 4}]}) == {3})
+
+    async def malformed(*a):
+        return await real_accessory_types(Session({"code": 200, "result": [{"accessoryType": None}]}), "a", "b", "GW")
+
+    modules.accessory_types = malformed
+    r = await modules.detect_modules(None, Fake({"genEn": 1, "genStat": 1}), with_both, on)
+    check("cloud: malformed reply during setup falls back to local (no crash)",
+          r[MOD_GENERATOR].source == "local" and "cloud check failed" in r[MOD_GENERATOR].detail)
+
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)
 

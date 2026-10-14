@@ -82,7 +82,6 @@ class AgateEntity(CoordinatorEntity[AgateCoordinator]):
         self._key = (description.cmd, dev_id) if description.per_device else description.cmd
         suffix = f"_apower{dev_id}" if dev_id is not None else ""
         self._attr_unique_id = f"{rt.serial}_{description.key}{suffix}"
-        rt.created_uids.add(self._attr_unique_id)
         self._attr_device_info = apower_device(rt, dev_id) if dev_id is not None else agate_device(rt)
 
     @property

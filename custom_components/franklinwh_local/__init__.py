@@ -21,7 +21,7 @@ from .const import (
 )
 from .coordinator import AgateRuntime, build_coordinators, discover_devices
 from .entity import agate_device
-from .modules import detect_modules
+from .modules import detect_modules, stale_module_unique_ids
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.SELECT,
              Platform.NUMBER, Platform.TIME, Platform.BUTTON]
@@ -76,11 +76,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Remove entities from a previous setup that no longer apply (e.g. a module now
-    # marked not installed).
+    # Remove the entities of modules now decided not installed. Only module-owned
+    # entities are touched; everything else is left alone.
     ent_reg = er.async_get(hass)
-    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if reg_entry.unique_id not in entry.runtime_data.created_uids:
+    reg_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+    stale = set(stale_module_unique_ids(entry.runtime_data.serial, [e.unique_id for e in reg_entries], modules))
+    for reg_entry in reg_entries:
+        if reg_entry.unique_id in stale:
             ent_reg.async_remove(reg_entry.entity_id)
     return True
 

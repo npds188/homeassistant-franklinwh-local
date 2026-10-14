@@ -23,7 +23,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .client import AgateClient, AgateError
 from .cloud import ACCESSORY_GENERATOR, ACCESSORY_SMART_CIRCUITS, CloudError, accessory_types
 from .const import (
+    CMD_CIRCUIT_METER,
     CMD_GENERATOR,
+    CMD_SMART_CIRCUITS,
     CONF_CIRCUITS_MODULE,
     CONF_CLOUD_CHECK,
     CONF_CLOUD_PASSWORD,
@@ -33,6 +35,7 @@ from .const import (
     MOD_GENERATOR,
     MODULE_AUTO,
     MODULE_INSTALLED,
+    MODULE_ENTITY_KEYS,
     MODULE_NOT_INSTALLED,
 )
 
@@ -41,6 +44,41 @@ _LOGGER = logging.getLogger(__name__)
 MODULE_NAMES = {MOD_GENERATOR: "Generator", MOD_CIRCUITS: "Smart Circuits"}
 CLOUD_TYPES = {MOD_GENERATOR: ACCESSORY_GENERATOR, MOD_CIRCUITS: ACCESSORY_SMART_CIRCUITS}
 OPTION_KEYS = {MOD_GENERATOR: CONF_GENERATOR_MODULE, MOD_CIRCUITS: CONF_CIRCUITS_MODULE}
+
+
+def skipped_commands(generator: bool, circuits: bool) -> set[int]:
+    """Read commands not worth polling for the installed modules.
+
+    1411 (circuit metering) carries the smart-circuit power and the V2L readings; V2L
+    belongs to the Generator module (it shares the generator input), so 1411 is polled
+    if either module is installed.
+    """
+    skip: set[int] = set()
+    if not generator:
+        skip.add(CMD_GENERATOR)
+    if not circuits:
+        skip.add(CMD_SMART_CIRCUITS)
+    if not generator and not circuits:
+        skip.add(CMD_CIRCUIT_METER)
+    return skip
+
+
+def stale_module_unique_ids(serial: str, unique_ids: list[str], modules: dict[str, "ModuleStatus"]) -> list[str]:
+    """unique_ids that belong to a module now decided NOT installed.
+
+    Only module-owned keys (MODULE_ENTITY_KEYS) are ever returned, so a transient read
+    failure at startup (e.g. the mode list or aPower discovery) can never remove other
+    entities or their customisations.
+    """
+    absent = [m for m, s in modules.items() if not s.installed]
+    out = []
+    for uid in unique_ids:
+        if not uid.startswith(f"{serial}_"):
+            continue
+        key = uid[len(serial) + 1:]
+        if any(key in MODULE_ENTITY_KEYS[m] for m in absent):
+            out.append(uid)
+    return out
 
 
 @dataclass(frozen=True)
