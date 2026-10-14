@@ -153,6 +153,11 @@ class AgateClient:
             except OSError:
                 pass
 
+    # Per-circuit fields the 1409 block carries; all must be present for every circuit in
+    # the block before it is written back (the aGate takes the whole block as the new config).
+    CIRCUIT_FIELDS = ("Name", "MsgType", "SocLowSet", "Mode", "ProLoad", "AtuoEn", "Freq",
+                      "TimeEn", "Time", "TimeSet")
+
     async def set_smart_circuit(self, circuit: int, on: bool) -> dict[str, Any]:
         async with self.write_lock:
             return await self._set_smart_circuit(circuit, on)
@@ -168,9 +173,16 @@ class AgateClient:
         """
         if circuit not in (1, 2, 3):
             raise ValueError(f"circuit must be 1, 2 or 3, not {circuit!r}")
-        block = await self._read_block(1409, ("SwMerge", f"Sw{circuit}Mode", f"Sw{circuit}MsgType",
-                                              f"Sw{circuit}ProLoad", f"Sw{circuit}Name"))
+        block = await self._read_block(1409, ("SwMerge",))
         targets = [1, 2] if block.get("SwMerge") == 1 and circuit in (1, 2) else [circuit]
+        # Every circuit the block describes, plus every circuit we're about to write, must
+        # be complete; otherwise we'd send back a manufactured or truncated config.
+        present = {i for i in (1, 2, 3) if any(k.startswith(f"Sw{i}") for k in block)}
+        missing = [f"Sw{i}{f}" for i in sorted(present | set(targets))
+                   for f in self.CIRCUIT_FIELDS if f"Sw{i}{f}" not in block]
+        if missing:
+            raise AgateError("cmd 1409: config block incomplete (missing "
+                             f"{', '.join(missing[:6])}{'…' if len(missing) > 6 else ''}); not writing")
         mode = 1 if on else 0
         for i in (1, 2, 3):
             if f"Sw{i}MsgType" in block:

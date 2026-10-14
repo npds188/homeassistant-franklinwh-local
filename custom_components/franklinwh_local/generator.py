@@ -91,9 +91,7 @@ class GeneratorEntity(AgateEntity):
             post = await self.rt.client.set_generator(changes, validate)
         except (AgateError, ValueError) as err:
             raise HomeAssistantError(f"Generator: {err}") from err
-        data = dict(self.rt.detail.data or {})
-        data[CMD_GENERATOR] = post
-        self.rt.detail.async_set_updated_data(data)
+        self.rt.detail.async_publish_reply(CMD_GENERATOR, post)
 
 
 class GeneratorModeSelect(GeneratorEntity, SelectEntity):

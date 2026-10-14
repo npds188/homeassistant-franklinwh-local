@@ -15,7 +15,7 @@ import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import AgateClient, AgateError
@@ -79,6 +79,14 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
         # entities go unavailable; a poll where every command fails is an UpdateFailed.
         self.grace = 2 * interval
         self._last_ok: dict[Any, float] = {}
+
+    @callback
+    def async_publish_reply(self, key: Any, reply: dict[str, Any]) -> None:
+        """Publish a reply obtained outside a poll (e.g. a write's read-back) as fresh data."""
+        self._last_ok[key] = time.monotonic()
+        data = dict(self.data or {})
+        data[key] = reply
+        self.async_set_updated_data(data)
 
     async def _async_update_data(self) -> AgateData:
         data: AgateData = {}

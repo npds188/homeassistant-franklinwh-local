@@ -23,7 +23,13 @@ GEN = {"opt": 0, "result": 0, "reason": 0, "genEn": 1, "mode": 2, "genStat": 1, 
        "charge1En": 0, "charge1StartTime": "02:30", "charge1EndTime": "03:00",
        "charge2En": 1, "charge2StartTime": "02:00", "charge2EndTime": "04:00",
        "charge3En": 0, "charge3StartTime": "00:00", "charge3EndTime": "00:00"}
-CIRCUITS = {"opt": 0, "result": 0, "SwMerge": 0, "Sw1Name": "A", "Sw1MsgType": 0, "Sw1Mode": 1, "Sw1ProLoad": 1}
+def circuit(n, mode=0):
+    return {f"Sw{n}Name": f"C{n}", f"Sw{n}MsgType": 0, f"Sw{n}SocLowSet": 20, f"Sw{n}Mode": mode,
+            f"Sw{n}ProLoad": 0, f"Sw{n}AtuoEn": 0, f"Sw{n}Freq": 0, f"Sw{n}TimeEn": [0, 0, 0, 0],
+            f"Sw{n}Time": ["2000-01-01 00:00"] * 4, f"Sw{n}TimeSet": [0, 0, 0, 0]}
+
+
+CIRCUITS = {"opt": 0, "result": 0, "SwMerge": 0, **circuit(1, 1), **circuit(2), **circuit(3), "genStat": 1}
 
 
 class FakeAgate(AgateClient):
@@ -81,6 +87,19 @@ async def main():
     a = FakeAgate({(1409, 0): CIRCUITS})
     await a.set_smart_circuit(1, False)
     check("2f: smart-circuit write still works with a full block", len(a.writes()) == 1)
+    merged_missing_2 = {k: v for k, v in {**CIRCUITS, "SwMerge": 1}.items() if not k.startswith("Sw2")}
+    a = FakeAgate({(1409, 0): merged_missing_2})
+    err = await raises(a.set_smart_circuit(1, False), AgateError)
+    check("2g: merged circuits with partner (Sw2*) missing -> refused, no write", err and not a.writes())
+    a = FakeAgate({(1409, 0): {**CIRCUITS, "SwMerge": 1}})
+    await a.set_smart_circuit(1, False)
+    w = a.writes()[0]["dataArea"] if a.writes() else {}
+    check("2h: merged circuits complete -> both 1 and 2 written off",
+          w.get("Sw1Mode") == 0 and w.get("Sw2Mode") == 0 and w.get("Sw2MsgType") == 1 and w.get("Sw3MsgType") == 0)
+    no_sw3_time = {k: v for k, v in CIRCUITS.items() if k != "Sw3Time"}
+    a = FakeAgate({(1409, 0): no_sw3_time})
+    err = await raises(a.set_smart_circuit(1, False), AgateError)
+    check("2i: non-target circuit truncated (Sw3Time missing) -> refused, no write", err and not a.writes())
 
     # --- Finding 1: checks run on the fresh merged block --------------------------------
     # ChatGPT's case: cached stop 90 %, actual stop 60 %, request start 70 %.
@@ -129,6 +148,22 @@ async def main():
     c = coord(Half({(1901, 0): {"result": 0, "x": 2}}), old, {1901: now, 1709: now - 1000})
     d = await c._async_update_data()
     check("3c: failure older than grace drops the value (unavailable)", 1709 not in d and 1901 in d)
+
+    # Finding 3b (round 2): a successful write's read-back counts as fresh data.
+    published = {}
+
+    def publish_spy(data):
+        published.update(data)
+
+    c = coord(Half({(1901, 0): {"result": 0, "x": 3}}), {1709: {"y": 1}}, {1709: now - 1000})
+    c.async_set_updated_data = publish_spy
+    AgateCoordinator.async_publish_reply(c, 1709, {"result": 0, "y": 9})
+    d = await c._async_update_data()   # 1709 now fails, but the write's read-back is fresh
+    check("3d: write read-back refreshes the grace timer; next failed poll keeps it",
+          published.get(1709, {}).get("y") == 9 and c._last_ok[1709] > now)
+    c.data = published
+    d = await c._async_update_data()
+    check("3e: ...and keeps it within grace after a failed poll", d.get(1709, {}).get("y") == 9)
 
     print(f"\n{sum(ok for _, ok in results)}/{len(results)} passed")
     sys.exit(0 if all(ok for _, ok in results) else 1)
