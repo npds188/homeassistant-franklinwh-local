@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import AgateConfigEntry
 from .client import AgateError
-from .const import CMD_MODE_LIST, CMD_POWER_FLOW, MODE_TYPES
+from .const import CMD_MODE_LIST, CMD_POWER_FLOW, MOD_GENERATOR, MODE_TYPES
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription
 from .generator import GeneratorModeSelect
@@ -126,4 +126,8 @@ class OperatingModeSelect(AgateEntity, SelectEntity):
 async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
-    async_add_entities([OperatingModeSelect(entry.runtime_data), GeneratorModeSelect(entry.runtime_data)])
+    rt = entry.runtime_data
+    entities: list[SelectEntity] = [OperatingModeSelect(rt)]
+    if rt.has(MOD_GENERATOR):
+        entities.append(GeneratorModeSelect(rt))
+    async_add_entities(entities)

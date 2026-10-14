@@ -20,9 +20,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .client import AgateClient, AgateError
 from .const import (
+    CMD_CIRCUIT_METER,
     CMD_DEVICE_CHECK,
+    CMD_GENERATOR,
     CMD_MODE_LIST,
     CMD_POWER_FLOW,
+    CMD_SMART_CIRCUITS,
     CONFIG_CMDS,
     DETAIL_CMDS,
     DETAIL_DEVICE_CMDS,
@@ -142,6 +145,15 @@ class AgateRuntime:
     static: AgateCoordinator
     coordinators: list[AgateCoordinator] = field(default_factory=list)
     agate_device_id: str | None = None
+    # Optional modules -> ModuleStatus (see modules.py)
+    modules: dict[str, Any] = field(default_factory=dict)
+    # unique_ids of every entity created this setup (stale ones are removed afterwards)
+    created_uids: set[str] = field(default_factory=set)
+
+    def has(self, module: str | None) -> bool:
+        """True if the entity's module is installed (or it belongs to no module)."""
+        status = self.modules.get(module) if module else None
+        return status is None or status.installed
 
 
 async def discover_devices(client: AgateClient) -> dict[int, str]:
@@ -169,13 +181,19 @@ def build_coordinators(
     detail_s: int,
     config_s: int,
     static_s: int,
+    generator: bool = True,
+    circuits: bool = True,
 ) -> tuple[AgateCoordinator, AgateCoordinator, AgateCoordinator, AgateCoordinator]:
+    # Don't poll data for modules that aren't installed.
+    skip = ({CMD_GENERATOR} if not generator else set()) | ({CMD_CIRCUIT_METER, CMD_SMART_CIRCUITS} if not circuits else set())
     fast = AgateCoordinator(hass, entry, client, "fast", fast_s, FAST_CMDS)
     detail = AgateCoordinator(
-        hass, entry, client, "detail", detail_s, DETAIL_CMDS, DETAIL_DEVICE_CMDS, device_ids, partial_ok=True
+        hass, entry, client, "detail", detail_s, tuple(c for c in DETAIL_CMDS if c not in skip),
+        DETAIL_DEVICE_CMDS, device_ids, partial_ok=True
     )
     config = AgateCoordinator(
-        hass, entry, client, "config", config_s, (CMD_MODE_LIST, *CONFIG_CMDS), partial_ok=True
+        hass, entry, client, "config", config_s,
+        (CMD_MODE_LIST, *(c for c in CONFIG_CMDS if c not in skip)), partial_ok=True
     )
     static = AgateCoordinator(
         hass, entry, client, "static", static_s, STATIC_CMDS, STATIC_DEVICE_CMDS, device_ids, partial_ok=True

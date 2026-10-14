@@ -3,22 +3,65 @@
     "step": {
       "user": {
         "title": "FranklinWH aGate (local)",
-        "description": "Read-only local polling of the aGate over its Direct Connect socket (TCP 9000). Enter the aGate's LAN IP address.",
+        "description": "Local polling and control of the aGate over its Direct Connect socket (TCP 9000). Enter the aGate's LAN IP address.",
         "data": { "host": "aGate IP address", "port": "Port" }
+      },
+      "modules": {
+        "title": "Optional modules",
+        "description": "Detected on the aGate: {detected}.\n\nAuto-detect uses this (or your FranklinWH account, if you turn on the cloud check). Choose Installed / Not installed to override. Entities for modules that aren't installed are not created.",
+        "data": {
+          "generator_module": "Generator module",
+          "smart_circuits_module": "Smart Circuits module",
+          "cloud_check": "Check modules with my FranklinWH account",
+          "cloud_username": "FranklinWH account email",
+          "cloud_password": "FranklinWH account password"
+        },
+        "data_description": {
+          "cloud_check": "Optional. Reads the accessory list from the FranklinWH cloud when the integration starts. Polling and control stay local.",
+          "cloud_password": "Stored in Home Assistant and only used for the module check."
+        }
       }
     },
-    "error": { "cannot_connect": "Could not reach the aGate on that address and port." },
+    "error": {
+      "cannot_connect": "Could not reach the aGate on that address and port.",
+      "cloud_credentials_required": "Enter your FranklinWH account email and password, or turn off the cloud check.",
+      "invalid_auth": "The FranklinWH account email or password was rejected.",
+      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check."
+    },
     "abort": { "already_configured": "This aGate is already configured." }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Polling intervals (seconds)",
+        "title": "FranklinWH Local options",
+        "description": "Polling intervals are in seconds. Changing modules reloads the integration; entities for modules that aren't installed are removed.",
         "data": {
           "fast_interval": "Power flow and grid (default 5)",
           "detail_interval": "Battery cells, generator, circuits, faults (default 60)",
-          "config_interval": "Modes, reserves and settings (default 900)"
+          "config_interval": "Modes, reserves and settings (default 900)",
+          "generator_module": "Generator module",
+          "smart_circuits_module": "Smart Circuits module",
+          "cloud_check": "Check modules with my FranklinWH account",
+          "cloud_username": "FranklinWH account email",
+          "cloud_password": "FranklinWH account password"
+        },
+        "data_description": {
+          "cloud_check": "Optional. Reads the accessory list from the FranklinWH cloud when the integration starts. Polling and control stay local."
         }
+      }
+    },
+    "error": {
+      "cloud_credentials_required": "Enter your FranklinWH account email and password, or turn off the cloud check.",
+      "invalid_auth": "The FranklinWH account email or password was rejected.",
+      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check."
+    }
+  },
+  "selector": {
+    "module": {
+      "options": {
+        "auto": "Auto-detect",
+        "installed": "Installed",
+        "not_installed": "Not installed"
       }
     }
   }

@@ -93,7 +93,27 @@ folder and restart Home Assistant.
 No YAML. **Settings → Devices & services → Add integration → FranklinWH Local**, enter the
 aGate's IP address (port 9000). The aGate's serial number is read automatically.
 
+### Optional modules
+
+The Generator module and the Smart Circuits module are optional extras. Setup has a
+**Modules** step showing what was detected; each module can be set to **Auto-detect**,
+**Installed** or **Not installed**. Entities for modules that aren't installed are not
+created (and are removed if a module is later set to Not installed).
+
+- **Auto-detect (local)** — Generator: the aGate reports the generator enabled or in any
+  state other than *disabled*. Smart Circuits: the aGate reports a Smart Load firmware
+  version. These signals are based on one aGate that has both modules — if detection is
+  wrong on yours, use the override (and please open an issue with the *Installed modules*
+  sensor's attributes).
+- **Cloud check (optional)** — tick *Check modules with my FranklinWH account* and enter
+  your FranklinWH app login to use FranklinWH's own accessory list. It's only contacted when
+  the integration starts or reloads; polling and control stay local. The password is stored
+  in Home Assistant's config. If the cloud can't be reached, local detection is used.
+- The diagnostic sensor **Installed modules** shows the result and how each was decided.
+
 **Configure** (on the integration) sets the polling intervals:
+
+Configure also changes the module settings above.
 
 | Option | Default | Range |
 |---|---|---|
@@ -136,6 +156,7 @@ venv/bin/python tests/live_entities.py <aGate IP>
 
 It only reads; it never sends a write.
 
+`tests/test_modules.py` checks module detection offline (local signals, cloud, overrides).
 `tests/test_review_fixes.py` runs offline against a fake aGate (no device needed) and checks
 the write-path safety rules: error replies and incomplete blocks are never written back,
 generator checks run on the freshly read settings, and failed polls make entities

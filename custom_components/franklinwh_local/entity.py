@@ -37,6 +37,8 @@ class AgateEntityDescription(EntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
     attrs_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     per_device: bool = False
+    # Optional module this entity belongs to (MOD_GENERATOR / MOD_CIRCUITS); None = always
+    module: str | None = None
 
 
 def agate_device(rt: AgateRuntime) -> DeviceInfo:
@@ -80,6 +82,7 @@ class AgateEntity(CoordinatorEntity[AgateCoordinator]):
         self._key = (description.cmd, dev_id) if description.per_device else description.cmd
         suffix = f"_apower{dev_id}" if dev_id is not None else ""
         self._attr_unique_id = f"{rt.serial}_{description.key}{suffix}"
+        rt.created_uids.add(self._attr_unique_id)
         self._attr_device_info = apower_device(rt, dev_id) if dev_id is not None else agate_device(rt)
 
     @property

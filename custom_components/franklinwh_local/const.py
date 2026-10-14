@@ -9,6 +9,18 @@ CONF_FAST_INTERVAL = "fast_interval"
 CONF_DETAIL_INTERVAL = "detail_interval"
 CONF_CONFIG_INTERVAL = "config_interval"
 
+# Optional modules: how each is decided (see modules.py)
+CONF_GENERATOR_MODULE = "generator_module"
+CONF_CIRCUITS_MODULE = "smart_circuits_module"
+MODULE_AUTO, MODULE_INSTALLED, MODULE_NOT_INSTALLED = "auto", "installed", "not_installed"
+MODULE_CHOICES = [MODULE_AUTO, MODULE_INSTALLED, MODULE_NOT_INSTALLED]
+MOD_GENERATOR, MOD_CIRCUITS = "generator", "smart_circuits"
+
+# Optional cloud check of the account's accessory list (setup/reload only)
+CONF_CLOUD_CHECK = "cloud_check"
+CONF_CLOUD_USERNAME = "cloud_username"
+CONF_CLOUD_PASSWORD = "cloud_password"
+
 DEFAULT_FAST_INTERVAL = 5  # s — power flow + grid electrical
 DEFAULT_DETAIL_INTERVAL = 60  # s — battery cells, generator, circuits, faults
 DEFAULT_CONFIG_INTERVAL = 900  # s — modes/reserves, schedules, settings

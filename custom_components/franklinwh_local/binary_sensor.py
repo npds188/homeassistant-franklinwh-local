@@ -1,7 +1,7 @@
 """Binary sensors for FranklinWH Local."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -21,6 +21,8 @@ from .const import (
     CMD_RELAY_STATUS,
     CMD_RUN_STATUS,
     CMD_SMART_CIRCUITS,
+    MOD_CIRCUITS,
+    MOD_GENERATOR,
 )
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription, num
@@ -86,6 +88,10 @@ BINARY_SENSORS: tuple[AgateBinaryDescription, ...] = (
 )
 
 
+_GENERATOR_KEYS = {"generator_running", "generator_enabled", "generator_relay_welded", "generator_relay_open_fault"}
+BINARY_SENSORS = tuple(replace(d, module=MOD_GENERATOR) if d.key in _GENERATOR_KEYS else d for d in BINARY_SENSORS)
+
+
 class AgateBinarySensor(AgateEntity, BinarySensorEntity):
     entity_description: AgateBinaryDescription
 
@@ -132,6 +138,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS]
-    entities += [SmartCircuitSensor(rt, n) for n in (1, 2, 3)]
+    entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS if rt.has(d.module)]
+    if rt.has(MOD_CIRCUITS):
+        entities += [SmartCircuitSensor(rt, n) for n in (1, 2, 3)]
     async_add_entities(entities)
