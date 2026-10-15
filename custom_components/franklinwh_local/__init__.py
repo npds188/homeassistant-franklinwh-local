@@ -1,4 +1,4 @@
-"""FranklinWH Local — local polling of the FranklinWH aGate (TCP 9000); read-only except smart-circuit switches, operating mode and generator controls."""
+"""FranklinWH Local — local polling of the FranklinWH aGate over Direct Connect (TCP 9000), with optional read-only SunSpec Modbus (TCP 502) as fallback or sole source; read-only except smart-circuit switches, operating mode and generator controls."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
@@ -7,11 +7,20 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
+import logging
+
 from .client import DEFAULT_PORT, AgateClient, AgateError
 from .const import (
     CONF_CONFIG_INTERVAL,
     CONF_DETAIL_INTERVAL,
     CONF_FAST_INTERVAL,
+    CONF_MODBUS_PORT,
+    CONF_SERIAL,
+    CONF_SOURCE,
+    DEFAULT_MODBUS_INTERVAL,
+    SOURCE_DIRECT,
+    SOURCE_FALLBACK,
+    SOURCE_MODBUS,
     DEFAULT_CONFIG_INTERVAL,
     DEFAULT_DETAIL_INTERVAL,
     DEFAULT_FAST_INTERVAL,
@@ -19,9 +28,12 @@ from .const import (
     MOD_GENERATOR,
     STATIC_INTERVAL,
 )
-from .coordinator import AgateRuntime, build_coordinators, discover_devices
+from .coordinator import AgateRuntime, ModbusCoordinator, build_coordinators, discover_devices
 from .entity import agate_device
+from .modbus import DEFAULT_MODBUS_PORT, AgateModbus, ModbusError
 from .modules import detect_modules, stale_module_unique_ids
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.SELECT,
              Platform.NUMBER, Platform.TIME, Platform.BUTTON]
@@ -30,16 +42,35 @@ type AgateConfigEntry = ConfigEntry[AgateRuntime]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> bool:
-    client = AgateClient(entry.data[CONF_HOST], entry.data.get(CONF_PORT, DEFAULT_PORT))
-    try:
-        identity = await client.identify()
-    except AgateError as err:
-        raise ConfigEntryNotReady(f"aGate not reachable: {err}") from err
-
-    devices = await discover_devices(client)
-    device_ids = sorted(devices)
     opts = entry.options
-    modules = await detect_modules(hass, client, identity, dict(opts))
+    source = opts.get(CONF_SOURCE, entry.data.get(CONF_SOURCE, SOURCE_FALLBACK))
+    client = AgateClient(entry.data[CONF_HOST], entry.data.get(CONF_PORT, DEFAULT_PORT))
+    modbus = None
+    if source != SOURCE_DIRECT:
+        modbus = AgateModbus(entry.data[CONF_HOST], opts.get(CONF_MODBUS_PORT, DEFAULT_MODBUS_PORT))
+
+    if source == SOURCE_MODBUS:
+        # Read-only core readings over Modbus; Direct Connect is never contacted.
+        try:
+            identity = {"modbus": await modbus.discover()}
+        except ModbusError as err:
+            raise ConfigEntryNotReady(f"aGate Modbus not reachable: {err}") from err
+        devices, modules = {1: ""}, {}
+    else:
+        try:
+            identity = await client.identify()
+        except AgateError as err:
+            # Even with Modbus fallback, setup needs Direct Connect once (identity,
+            # devices, modules); HA retries setup until it answers.
+            raise ConfigEntryNotReady(f"aGate not reachable: {err}") from err
+        devices = await discover_devices(client)
+        modules = await detect_modules(hass, client, identity, dict(opts))
+        if modbus is not None:
+            try:
+                await modbus.discover()
+            except ModbusError as err:
+                _LOGGER.warning("Modbus not available (%s); fallback and lifetime energy will retry", err)
+    device_ids = sorted(devices)
     fast, detail, config, static = build_coordinators(
         hass,
         entry,
@@ -49,17 +80,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         opts.get(CONF_DETAIL_INTERVAL, DEFAULT_DETAIL_INTERVAL),
         opts.get(CONF_CONFIG_INTERVAL, DEFAULT_CONFIG_INTERVAL),
         STATIC_INTERVAL,
-        generator=modules[MOD_GENERATOR].installed,
-        circuits=modules[MOD_CIRCUITS].installed,
+        generator=modules[MOD_GENERATOR].installed if modules else False,
+        circuits=modules[MOD_CIRCUITS].installed if modules else False,
+        modbus=modbus,
+        source=source,
     )
     # The fast tier must work for setup to succeed; the others may come later.
     await fast.async_config_entry_first_refresh()
-    for coord in (config, static, detail):
-        await coord.async_refresh()
+    if source != SOURCE_MODBUS:
+        for coord in (config, static, detail):
+            await coord.async_refresh()
+    modbus_coord = None
+    if modbus is not None:
+        modbus_coord = ModbusCoordinator(hass, entry, modbus, DEFAULT_MODBUS_INTERVAL)
+        await modbus_coord.async_refresh()
 
     entry.runtime_data = AgateRuntime(
         client=client,
-        serial=client.equip_no or "",
+        serial=client.equip_no or entry.data.get(CONF_SERIAL, ""),
         identity=identity,
         device_ids=device_ids,
         device_serials=devices,
@@ -69,6 +107,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         static=static,
         coordinators=[fast, detail, config, static],
         modules=modules,
+        source=source,
+        modbus=modbus_coord,
     )
     # Register the aGate first so aPower devices can link to it by registry id.
     agate = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **agate_device(entry.runtime_data))
@@ -78,6 +118,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
 
     # Remove the entities of modules now decided not installed. Only module-owned
     # entities are touched; everything else is left alone.
+    if source == SOURCE_MODBUS:
+        return True   # modules unknown without Direct Connect: leave their entities alone
     ent_reg = er.async_get(hass)
     reg_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     stale = set(stale_module_unique_ids(entry.runtime_data.serial, [e.unique_id for e in reg_entries], modules))

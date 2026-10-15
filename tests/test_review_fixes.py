@@ -123,6 +123,7 @@ async def main():
         c = AgateCoordinator.__new__(AgateCoordinator)
         c.client, c.cmds, c.device_cmds, c.device_ids = client, (1901, 1709), (), [1]
         c.partial_ok, c.grace, c._last_ok, c.data, c.name = True, grace, last_ok, data, "test"
+        c.source, c.modbus, c.active_source = "direct", None, "direct"
         return c
 
     class Dead(FakeAgate):
@@ -164,6 +165,25 @@ async def main():
     c.data = published
     d = await c._async_update_data()
     check("3e: ...and keeps it within grace after a failed poll", d.get(1709, {}).get("y") == 9)
+
+    # --- Off-grid mode: power flow reports status 7, mode config has the programme -----
+    from franklinwh_local.coordinator import resolve_mode  # noqa: PLC0415
+    ids = {79680, 77244, 83132, 2718}
+    a = FakeAgate({(1403, 0): {"result": 0, "runingMode": 77244}})
+    r = await resolve_mode(a, {"mode": 7, "soc": 98}, ids)
+    check("mode: off-grid status 7 resolved to the running programme via 1403",
+          r["mode"] == 77244 and r["mode_raw"] == 7 and r["soc"] == 98)
+    a = FakeAgate({})
+    r = await resolve_mode(a, {"mode": 79680}, ids)
+    check("mode: a real programme id is left alone and 1403 is not read", r["mode"] == 79680 and not a.sent)
+    a = FakeAgate({(1403, 0): {"result": 1, "reason": 4}})
+    r = await resolve_mode(a, {"mode": 7}, ids)
+    check("mode: 1403 error keeps the raw reply (no guess)", r == {"mode": 7})
+    a = FakeAgate({(1403, 0): {"result": 0, "runingMode": 12345}})
+    r = await resolve_mode(a, {"mode": 7}, ids)
+    check("mode: unknown runingMode isn't used", r == {"mode": 7})
+    r = await resolve_mode(FakeAgate({}), {"mode": 7}, set())
+    check("mode: without a mode list nothing is resolved", r == {"mode": 7})
 
     print(f"\n{sum(ok for _, ok in results)}/{len(results)} passed")
     sys.exit(0 if all(ok for _, ok in results) else 1)

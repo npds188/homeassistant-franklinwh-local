@@ -3,12 +3,16 @@
     "step": {
       "user": {
         "title": "FranklinWH aGate (local)",
-        "description": "Local polling and control of the aGate over its Direct Connect socket (TCP 9000). Enter the aGate's LAN IP address.",
-        "data": { "host": "aGate IP address", "port": "Port" }
+        "description": "Local polling and control of the aGate. Enter the aGate's LAN IP address.\n\nData source: Direct Connect (TCP 9000) is used for everything, including control. SunSpec Modbus (TCP 502) is FranklinWH's official read interface — ask FranklinWH support to enable it. With the Modbus backup, it adds lifetime energy and keeps the core readings going if Direct Connect stops working (for example after a firmware update).",
+        "data": {
+          "host": "aGate IP address",
+          "port": "Port",
+          "source": "Data source"
+        }
       },
       "modules": {
         "title": "Optional modules",
-        "description": "Detected on the aGate: {detected}.\n\nAuto-detect uses this (or your FranklinWH account, if you turn on the cloud check). Choose Installed / Not installed to override. Entities for modules that aren't installed are not created.",
+        "description": "Detected on the aGate: {detected}.\n\nModbus: {modbus}.\n\nAuto-detect uses this (or your FranklinWH account, if you turn on the cloud check). Choose Installed / Not installed to override. Entities for modules that aren't installed are not created.",
         "data": {
           "generator_module": "Generator module",
           "smart_circuits_module": "Smart Circuits module",
@@ -26,15 +30,18 @@
       "cannot_connect": "Could not reach the aGate on that address and port.",
       "cloud_credentials_required": "Enter your FranklinWH account email and password, or turn off the cloud check.",
       "invalid_auth": "The FranklinWH account email or password was rejected.",
-      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check."
+      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check.",
+      "cannot_connect_modbus": "Could not reach the aGate's Modbus interface (TCP 502). Is Modbus enabled?"
     },
-    "abort": { "already_configured": "This aGate is already configured." }
+    "abort": {
+      "already_configured": "This aGate is already configured."
+    }
   },
   "options": {
     "step": {
       "init": {
         "title": "FranklinWH Local options",
-        "description": "Polling intervals are in seconds. Changing modules reloads the integration; entities for modules that aren't installed are removed.",
+        "description": "Polling intervals are in seconds. Changing modules reloads the integration; entities for modules that aren't installed are removed. Modbus only creates just the core readings and no controls.",
         "data": {
           "fast_interval": "Power flow and grid (default 5)",
           "detail_interval": "Battery cells, generator, circuits, faults (default 60)",
@@ -43,7 +50,9 @@
           "smart_circuits_module": "Smart Circuits module",
           "cloud_check": "Check modules with my FranklinWH account",
           "cloud_username": "FranklinWH account email",
-          "cloud_password": "FranklinWH account password"
+          "cloud_password": "FranklinWH account password",
+          "source": "Data source",
+          "modbus_port": "Modbus TCP port (default 502)"
         },
         "data_description": {
           "cloud_check": "Optional. Reads the accessory list from the FranklinWH cloud when the integration starts. Polling and control stay local."
@@ -53,7 +62,8 @@
     "error": {
       "cloud_credentials_required": "Enter your FranklinWH account email and password, or turn off the cloud check.",
       "invalid_auth": "The FranklinWH account email or password was rejected.",
-      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check."
+      "cloud_failed": "Could not reach the FranklinWH cloud. Try again, or turn off the cloud check.",
+      "cannot_connect_modbus": "The aGate's Modbus interface (TCP 502) didn't answer, or answered for a different aGate. Check that FranklinWH has enabled Modbus, or choose Direct Connect only."
     }
   },
   "selector": {
@@ -62,6 +72,13 @@
         "auto": "Auto-detect",
         "installed": "Installed",
         "not_installed": "Not installed"
+      }
+    },
+    "source": {
+      "options": {
+        "direct_modbus_fallback": "Direct Connect, Modbus backup (recommended)",
+        "direct": "Direct Connect only",
+        "modbus": "Modbus only (read-only)"
       }
     }
   }

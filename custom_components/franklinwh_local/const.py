@@ -35,6 +35,27 @@ MODULE_ENTITY_KEYS = {
     }),
 }
 
+# Data source
+CONF_SOURCE = "source"
+CONF_MODBUS_PORT = "modbus_port"
+SOURCE_FALLBACK = "direct_modbus_fallback"   # Direct Connect, Modbus when Direct Connect fails
+SOURCE_DIRECT = "direct"                     # Direct Connect only
+SOURCE_MODBUS = "modbus"                     # SunSpec Modbus only (read-only, core readings)
+SOURCE_CHOICES = [SOURCE_FALLBACK, SOURCE_DIRECT, SOURCE_MODBUS]
+CMD_MODBUS = "modbus"                        # data key for the Modbus snapshot
+
+# Entities that exist when the source is Modbus only (everything else needs Direct Connect).
+MODBUS_ONLY_KEYS = frozenset({
+    "solar_power", "grid_power", "grid_import_power", "grid_export_power", "home_power", "battery_power",
+    "battery_charge_power", "battery_discharge_power", "battery_soc", "agate_temperature", "grid_voltage",
+    "grid_current", "grid_frequency", "grid_status", "operating_mode", "grid_available", "grid_relay",
+    "data_source", "status",
+    # Modbus lifetime counters (coordinator tier "modbus")
+    "grid_import_total", "grid_export_total", "battery_charged_total", "battery_discharged_total",
+    "solar_energy_total", "battery_energy_available", "battery_capacity", "agate_cabinet_temperature",
+})
+DEFAULT_MODBUS_INTERVAL = 30  # s — lifetime counters, capacity, temperatures
+
 # Optional cloud check of the account's accessory list (setup/reload only)
 CONF_CLOUD_CHECK = "cloud_check"
 CONF_CLOUD_USERNAME = "cloud_username"

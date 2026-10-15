@@ -19,8 +19,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import AgateConfigEntry
 from .client import AgateError
-from .const import CMD_MODE_LIST, CMD_POWER_FLOW, MOD_GENERATOR, MODE_TYPES
-from .coordinator import AgateRuntime
+from .const import CMD_MODE_LIST, CMD_POWER_FLOW, MOD_GENERATOR, MODE_TYPES, SOURCE_MODBUS
+from .coordinator import AgateRuntime, resolve_mode
 from .entity import AgateEntity, AgateEntityDescription
 from .generator import GeneratorModeSelect
 
@@ -108,7 +108,8 @@ class OperatingModeSelect(AgateEntity, SelectEntity):
         while asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(CONFIRM_POLL)
             try:
-                active = int((await client.request(CMD_POWER_FLOW, {"opt": 0}))["mode"])
+                reply = await client.request(CMD_POWER_FLOW, {"opt": 0})
+                active = int((await resolve_mode(client, reply, set(self._programmes())))["mode"])
             except (AgateError, KeyError, TypeError, ValueError):
                 continue
             if active == target:
@@ -127,7 +128,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[SelectEntity] = [OperatingModeSelect(rt)]
+    # Mode control needs Direct Connect (Modbus is read-only here).
+    entities: list[SelectEntity] = [] if rt.source == SOURCE_MODBUS else [OperatingModeSelect(rt)]
     if rt.has(MOD_GENERATOR):
         entities.append(GeneratorModeSelect(rt))
     async_add_entities(entities)

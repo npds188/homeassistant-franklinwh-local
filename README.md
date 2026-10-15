@@ -14,11 +14,17 @@ generator.
 > **david2069** ([david2069/franklinwh-direct-connect-api](https://github.com/david2069/franklinwh-direct-connect-api)).
 > See [Credits](#credits).
 
-> **Unofficial.** Not affiliated with, endorsed by or supported by FranklinWH. It uses
+> **Unofficial.** Not affiliated with, endorsed by or supported by FranklinWH. It mainly uses
 > the aGate's undocumented local "Direct Connect" interface (the one the FranklinWH app
-> uses over the aGate hotspot / Bluetooth). A firmware update could change or block it
-> at any time. Provided as-is; use at your own risk, and don't contact FranklinWH support
-> about it.
+> uses over the aGate hotspot / Bluetooth); a firmware update could change or block it
+> at any time. It can also use FranklinWH's **official SunSpec Modbus** interface as a
+> backup (see [Data source](#data-source)). Provided as-is; use at your own risk, and don't
+> contact FranklinWH support about this integration.
+
+> **Beta.** Tested on one aGate X (New Zealand, single-phase) with one aPower, a Generator
+> module and Smart Circuits, including a real grid outage and generator run/stop. US
+> split-phase systems, multiple aPowers and generator auto-start are untested — issues
+> with your diagnostics are welcome.
 
 ## Security — read this first
 
@@ -34,6 +40,11 @@ is already public; but please treat the aGate as an unprotected control endpoint
   TCP 9000 (plus outbound internet if you still use the FranklinWH app/cloud). A firewall rule
   alone does not help on a flat network: devices on the same subnet reach each other directly.
 - Never expose port 9000 to the internet (no port forwarding).
+- If FranklinWH has enabled **Modbus (TCP 502)** on your aGate, the same applies to it: its
+  SunSpec map includes writable grid-control models (enter service, power limits, DER
+  controls), also unauthenticated. This integration only ever sends Modbus *read* requests
+  (function 3), but anything else on your network could write. Allow only Home Assistant to
+  reach TCP 502 as well.
 - Home Assistant becomes a control point for the aGate — keep its accounts and remote access
   secured.
 
@@ -41,6 +52,7 @@ is already public; but please treat the aGate as an unprotected control endpoint
 
 | | Updated | Entities |
 |---|---|---|
+| **Status** | every 5 s | What the system is doing, in words: *Generator starting / warming up / on load / cooling down*, *Grid down – on battery*, *Charging battery*, *Exporting to grid*… with a matching icon |
 | **Live power flow** | every 5 s | Solar, grid (plus import/export), home, battery (plus charge/discharge), generator power; battery SOC; aGate temperature |
 | **Energy today** | every 5 s | Solar, grid import, grid export, home, battery charged/discharged — ready for the Energy dashboard |
 | **Grid** | every 5 s | Voltage, current, frequency, Grid available, Grid status (Normal / Grid down / Off-grid), relay states |
@@ -75,6 +87,7 @@ locally — keep the cloud integration for those if you need them.
 - Home Assistant **2026.9** or newer
 - A FranklinWH aGate on your LAN (it listens on TCP port 9000). Tested on an aGate with
   firmware `V12R02B20D00` (New Zealand, single-phase) and one aPower.
+- Optional: SunSpec Modbus TCP enabled on the aGate (port 502) — see [Data source](#data-source).
 - The aGate's IP address — find it in the FranklinWH app under the network settings
   (e.g. *Ethernet* or *Wi-Fi* page). A DHCP reservation on your router is recommended.
 
@@ -92,6 +105,51 @@ folder and restart Home Assistant.
 
 No YAML. **Settings → Devices & services → Add integration → FranklinWH Local**, enter the
 aGate's IP address (port 9000). The aGate's serial number is read automatically.
+
+### Data source
+
+The aGate has two local interfaces:
+
+- **Direct Connect** (TCP 9000) — the FranklinWH app's own interface. Undocumented, but it
+  has everything: exact live readings, generator and smart circuits, cells, modes, daily
+  energy, and all the controls. This integration always uses it as the main source.
+- **SunSpec Modbus TCP** (port 502) — FranklinWH's **official** read interface, a published
+  standard. It has the core readings and lifetime energy totals, but no generator, circuits,
+  cells, mode names or controls, and battery power only in 100 W steps.
+
+Because Direct Connect is undocumented, a firmware update could change or block it. Modbus
+is the safety net: if Direct Connect stops answering, the core readings (power flow, SOC,
+grid voltage/current/frequency, grid status, operating mode) carry on from Modbus under the
+same entities, so outage alerts, power-flow cards and automations keep working until it's
+fixed. It switches back by itself when Direct Connect answers again.
+
+| Source | What you get |
+|---|---|
+| **Direct Connect, Modbus backup** (default, recommended) | Everything over Direct Connect, Modbus lifetime energy sensors, and Modbus takes over the core readings if Direct Connect fails. Modbus is read every 30 s (lifetime totals), and every poll only while Direct Connect is failing. |
+| **Direct Connect only** | Everything over Direct Connect; Modbus is never contacted. |
+| **Modbus only (read-only)** | Core readings and lifetime energy only — no controls, no battery cells, generator, circuits, daily energy or mode names. |
+
+**Getting Modbus enabled:** it's off by default on AU/NZ aGates. Ask **FranklinWH support
+directly** (in AU/NZ: info-au@franklinwh.com) to enable *local SunSpec Modbus TCP
+monitoring* for your aGate, giving its serial number — installers may not know how. US
+aGates often have it on already (it's used by SPAN panels).
+
+Setup checks Modbus: with the backup selected and Modbus not answering, setup carries on
+with Direct Connect only and says so; you can turn the backup on later under **Configure**,
+which checks Modbus answers for the same aGate first.
+
+With Modbus in use you also get **Grid import / export lifetime**, **Battery charged /
+discharged lifetime**, **Solar energy lifetime** (good for the Energy dashboard — they don't
+reset at midnight), **Battery energy available**, **Battery capacity** and **aGate cabinet
+temperature**, plus a **Data source** diagnostic sensor showing which source fed the last
+reading and how many times it fell back.
+
+Modbus has no live solar register that can be trusted (it reads the inverters' standby draw
+as production at night), so while on Modbus solar power is derived from home − grid −
+battery and never negative — within about 1% of Direct Connect in daylight. Modbus has no
+generator reading either, so with the grid down and a generator possibly running, solar
+reads *unknown* rather than counting generator power as solar. Daily energy sensors read
+*unknown* while on Modbus and resume afterwards.
 
 ### Optional modules
 
@@ -138,6 +196,14 @@ heavily.
 - **Grid voltage** comes from the aGate's line voltage, so single-phase (AU/NZ) sites show the
   real ~230–240 V rather than two 120 V legs.
 - **Generator run/stop**: with no generator connected, the aGate accepts and ignores the command.
+  With one connected, *Run* goes *starting* → *running* after about a minute of warm-up (the
+  aGate waits for stable voltage and frequency before connecting it); *Stop* goes *quit*
+  (about a minute's cool-down) → *standby*.
+- **Generator voltage/current** update every 60 s; generator power and state every 5 s.
+- **During an outage** the aGate opens its solar relay, so solar reads 0 until it reconnects
+  the panels (about an hour later on one install), and it reports a status code instead of
+  the mode programme — the integration reads the real mode separately, so *Operating mode*
+  stays correct.
 - **Reserve SOC** is read-only here: there is no known local write.
 - Only one aGate per config entry; multiple aPowers are supported (one device each).
 
@@ -156,6 +222,9 @@ venv/bin/python tests/live_entities.py <aGate IP>
 
 It only reads; it never sends a write.
 
+`SOURCE=modbus` or `SOURCE=direct` runs it for the other data sources (default: fallback).
+`tests/test_modbus.py` checks Modbus decoding, the fallback switching and the setup-time
+Modbus check offline.
 `tests/test_modules.py` checks module detection offline (local signals, cloud, overrides).
 `tests/test_review_fixes.py` runs offline against a fake aGate (no device needed) and checks
 the write-path safety rules: error replies and incomplete blocks are never written back,

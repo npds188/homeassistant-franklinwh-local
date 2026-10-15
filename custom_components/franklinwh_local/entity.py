@@ -49,7 +49,7 @@ def agate_device(rt: AgateRuntime) -> DeviceInfo:
         model="aGate",
         name="FranklinWH aGate (local)",
         serial_number=rt.serial,
-        sw_version=ident.get("IBG_VER"),
+        sw_version=ident.get("IBG_VER") or (ident.get("modbus") or {}).get("version"),
         hw_version=str(ident.get("SyHdVersion", "")) or None,
     )
 

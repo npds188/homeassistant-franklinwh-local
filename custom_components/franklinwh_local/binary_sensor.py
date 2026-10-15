@@ -139,7 +139,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS if rt.has(d.module)]
+    entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS if rt.shows(d.key, d.module)]
     if rt.has(MOD_CIRCUITS):
         entities += [SmartCircuitSensor(rt, n) for n in (1, 2, 3)]
     async_add_entities(entities)

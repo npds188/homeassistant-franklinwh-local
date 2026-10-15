@@ -33,6 +33,7 @@ from .const import (
     CMD_GENERATOR,
     CMD_GRID_POLICY,
     CMD_INSTALL_PROFILE,
+    CMD_MODBUS,
     CMD_MODE_LIST,
     CMD_OFFGRID,
     CMD_POWER_ELECTRONICS,
@@ -45,6 +46,7 @@ from .const import (
     MOD_GENERATOR,
     MODE_TYPES,
     MODULE_ENTITY_KEYS,
+    SOURCE_MODBUS,
 )
 from .coordinator import AgateRuntime
 from .entity import AgateEntity, AgateEntityDescription, num
@@ -181,7 +183,7 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
     # --- detail: generator (1901) ---
     AgateSensorDescription(
         key="generator_voltage", name="Generator voltage", tier="detail", cmd=CMD_GENERATOR,
-        value_fn=lambda d: num(d["volt"], digits=1),
+        value_fn=lambda d: num(d["volt"], 0.1, 1),
         native_unit_of_measurement=V, device_class=SensorDeviceClass.VOLTAGE, state_class=MEAS,
         entity_category=DIAG, attrs_fn=_raw,
     ),
@@ -193,7 +195,7 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
     ),
     AgateSensorDescription(
         key="generator_current", name="Generator current", tier="detail", cmd=CMD_GENERATOR,
-        value_fn=lambda d: num(d["curr"], digits=1),
+        value_fn=lambda d: num(d["curr"], 0.1, 1),
         native_unit_of_measurement=A, device_class=SensorDeviceClass.CURRENT, state_class=MEAS,
         entity_category=DIAG,
     ),
@@ -234,6 +236,43 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
         key="supply_rating", name="Supply rating", tier="static", cmd=CMD_INSTALL_PROFILE,
         value_fn=lambda d: num(d["electricSupply"]), native_unit_of_measurement=A,
         entity_category=DIAG, attrs_fn=_raw,
+    ),
+)
+
+def _lifetime(key: str, field: str, name: str) -> AgateSensorDescription:
+    return AgateSensorDescription(
+        key=key, name=name, tier="modbus", cmd=CMD_MODBUS,
+        value_fn=lambda d: num(d[field], 0.001, 3),
+        native_unit_of_measurement=KWH, device_class=SensorDeviceClass.ENERGY, state_class=TOTAL_INC,
+    )
+
+
+# Modbus (SunSpec) lifetime counters and battery capacity, only when Modbus is in use.
+# Grid: SunSpec direction from the inverter's side — "absorbed" is energy taken from the grid
+# (import), "injected" is energy sent to it (export). Confirmed against Direct Connect's daily
+# import counter during 3.3 kWh of overnight grid charging.
+MODBUS_SENSORS: tuple[AgateSensorDescription, ...] = (
+    _lifetime("grid_import_total", "lifetime_wh_absorbed", "Grid import lifetime"),
+    _lifetime("grid_export_total", "lifetime_wh_injected", "Grid export lifetime"),
+    _lifetime("battery_charged_total", "battery_wh_charged", "Battery charged lifetime"),
+    _lifetime("battery_discharged_total", "battery_wh_discharged", "Battery discharged lifetime"),
+    _lifetime("solar_energy_total", "solar_wh", "Solar energy lifetime"),
+    AgateSensorDescription(
+        key="battery_energy_available", name="Battery energy available", tier="modbus", cmd=CMD_MODBUS,
+        value_fn=lambda d: num(d["available_wh"], 0.001, 2),
+        native_unit_of_measurement=KWH, device_class=SensorDeviceClass.ENERGY_STORAGE, state_class=MEAS,
+    ),
+    AgateSensorDescription(
+        key="battery_capacity", name="Battery capacity", tier="modbus", cmd=CMD_MODBUS,
+        value_fn=lambda d: num(d["capacity_wh"], 0.001, 2),
+        native_unit_of_measurement=KWH, device_class=SensorDeviceClass.ENERGY_STORAGE, entity_category=DIAG,
+        attrs_fn=lambda d: {"state_of_health": d.get("soh")},
+    ),
+    AgateSensorDescription(
+        key="agate_cabinet_temperature", name="aGate cabinet temperature", tier="modbus", cmd=CMD_MODBUS,
+        value_fn=lambda d: num(d["temp_cabinet"], digits=1),
+        native_unit_of_measurement=C, device_class=SensorDeviceClass.TEMPERATURE, state_class=MEAS,
+        entity_category=DIAG, attrs_fn=lambda d: {"switch_temperature": d.get("temp_switch")},
     ),
 )
 
@@ -367,17 +406,23 @@ class OperatingModeSensor(AgateEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         mode_id = self._value()
-        if mode_id is None:
-            return None
-        info = _mode_types(self.rt).get(int(mode_id))
-        return MODE_TYPES.get(int(info["scheduling_type"]), "unknown") if info else "unknown"
+        info = _mode_types(self.rt).get(int(mode_id)) if mode_id is not None else None
+        if info:
+            return MODE_TYPES.get(int(info["scheduling_type"]), "unknown")
+        # From Modbus without a mode list: only the mode type is known.
+        mode_type = (self.reply or {}).get("mode_type")
+        if mode_type is not None:
+            return MODE_TYPES.get(int(mode_type), "unknown")
+        return None if mode_id is None else "unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         reply = self.reply or {}
         info = _mode_types(self.rt).get(int(reply.get("mode", -1)), {})
         return {"mode_id": reply.get("mode"), "programme": reply.get("name"),
-                "reserve_soc": info.get("reserved_soc")}
+                "reserve_soc": info.get("reserved_soc"),
+                # set off-grid, when the power flow reports a status code instead of the programme
+                "power_flow_mode_code": reply.get("mode_raw")}
 
 
 GRID_NORMAL, GRID_DOWN, GRID_OFF = "Normal", "Grid down", "Off-grid"
@@ -415,8 +460,133 @@ class GridStatusSensor(AgateEntity, SensorEntity):
         reply = self.reply or {}
         offgrid = (self.rt.detail.data or {}).get(CMD_OFFGRID) or {}
         return {"grid_voltage": num(reply.get("gridLineVol"), 0.1, 1),
-                "grid_relay_closed": reply.get("mainRelay1Status") == 1,
+                "grid_relay_closed": {1: True, 0: False}.get(reply.get("mainRelay1Status")),
                 "offgrid_state": offgrid.get("offgridState")}
+
+
+# --- Status: one plain-language summary, like a vacuum's "Cleaning / Docked" ---------------
+ACTIVE_W = 50          # below this a flow counts as idle
+GEN_VOLTS_PRESENT = 100  # genVoltage (1707, tenths of a volt) above this = generator output present
+STATUS_ICONS = {
+    "Generator starting": "mdi:engine-outline",
+    "Generator warming up": "mdi:engine",
+    "Generator on load": "mdi:generator-stationary",
+    "Generator running (no load)": "mdi:engine",
+    "Generator cooling down": "mdi:fan-clock",
+    "Generator exercising": "mdi:engine",
+    "Generator error": "mdi:engine-off",
+    "Off-grid": "mdi:island",
+    "Grid down – on battery": "mdi:transmission-tower-off",
+    "Grid down – on solar": "mdi:solar-power",
+    "Grid down": "mdi:transmission-tower-off",
+    "Charging battery": "mdi:battery-charging",
+    "Battery powering home": "mdi:home-battery",
+    "Exporting to grid": "mdi:transmission-tower-export",
+    "Importing from grid": "mdi:transmission-tower-import",
+    "Idle": "mdi:home-lightning-bolt-outline",
+}
+
+
+def agate_status(flow: dict[str, Any], run: dict[str, Any], offgrid_state: Any = None,
+                 generator: bool = True) -> str | None:
+    """Summarise power flow (1301), grid electrical (1707) and the off-grid setting."""
+    if not flow:
+        return None
+    w = lambda key: num(flow.get(key)) or 0.0  # noqa: E731
+    battery, grid, gen = w("p_fhp"), w("p_uti"), w("p_gen")
+    gen_state = num(flow.get("genStat"))
+    if generator and gen_state is not None:
+        gen_volts = num((run or {}).get("genVoltage")) or 0.0
+        if gen_state == 2:
+            return "Generator warming up" if gen_volts > GEN_VOLTS_PRESENT else "Generator starting"
+        if gen_state == 3:
+            return "Generator on load" if gen > ACTIVE_W else "Generator running (no load)"
+        if gen_state == 4:
+            return "Generator cooling down"
+        if gen_state == 6:
+            return "Generator exercising"
+        if gen_state == 5:
+            return "Generator error"
+    if offgrid_state not in (None, 0, "0"):
+        return "Off-grid"
+    volts = num((run or {}).get("gridLineVol"), 0.1)
+    if volts is not None and volts <= GRID_PRESENT_V:
+        if battery > ACTIVE_W:
+            return "Grid down – on battery"
+        # Solar unknown on Modbus while a generator might be supplying: don't guess.
+        return "Grid down – on solar" if (num(flow.get("p_sun")) or 0.0) > ACTIVE_W else "Grid down"
+    if battery < -ACTIVE_W:
+        return "Charging battery"
+    if battery > ACTIVE_W:
+        return "Battery powering home"
+    if grid < -ACTIVE_W:
+        return "Exporting to grid"
+    if grid > ACTIVE_W:
+        return "Importing from grid"
+    return "Idle"
+
+
+class StatusSensor(AgateEntity, SensorEntity):
+    """What the system is doing now, in words (5 s)."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(STATUS_ICONS)
+
+    def __init__(self, rt: AgateRuntime) -> None:
+        super().__init__(
+            rt,
+            AgateSensorDescription(key="status", name="Status", tier="fast", cmd=CMD_POWER_FLOW,
+                                   value_fn=lambda d: d),
+        )
+
+    def _parts(self) -> tuple[dict[str, Any], dict[str, Any], Any]:
+        data = self.coordinator.data or {}
+        offgrid = ((self.rt.detail.data or {}).get(CMD_OFFGRID) or {}).get("offgridState")
+        return data.get(CMD_POWER_FLOW) or {}, data.get(CMD_RUN_STATUS) or {}, offgrid
+
+    @property
+    def native_value(self) -> str | None:
+        flow, run, offgrid = self._parts()
+        return agate_status(flow, run, offgrid, self.rt.has(MOD_GENERATOR))
+
+    @property
+    def icon(self) -> str:
+        return STATUS_ICONS.get(self.native_value or "", "mdi:home-lightning-bolt-outline")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        flow, run, _ = self._parts()
+        return {
+            "battery_soc": num(flow.get("soc"), digits=1), "battery_power": num(flow.get("p_fhp"), digits=0),
+            "home_power": num(flow.get("p_load"), digits=0), "solar_power": num(flow.get("p_sun"), digits=0),
+            "grid_power": num(flow.get("p_uti"), digits=0), "generator_power": num(flow.get("p_gen"), digits=0),
+            "generator_voltage": num(run.get("genVoltage"), 0.1, 1),
+        }
+
+
+class DataSourceSensor(AgateEntity, SensorEntity):
+    """Which source fed the latest 5 s readings: Direct Connect or Modbus."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["Direct Connect", "Modbus"]
+    _attr_icon = "mdi:swap-horizontal"
+    _attr_entity_category = DIAG
+
+    def __init__(self, rt: AgateRuntime) -> None:
+        super().__init__(
+            rt,
+            AgateSensorDescription(key="data_source", name="Data source", tier="fast",
+                                   cmd=CMD_POWER_FLOW, value_fn=lambda d: d),
+        )
+
+    @property
+    def native_value(self) -> str:
+        return "Modbus" if self.coordinator.active_source == SOURCE_MODBUS else "Direct Connect"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        c = self.coordinator
+        return {"configured": c.source, "fallbacks": c.fallback_count, "last_fallback": c.last_fallback}
 
 
 class ModeReserveSensor(AgateEntity, SensorEntity):
@@ -447,11 +617,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS if rt.has(d.module)]
-    entities.append(ModulesSensor(rt))
+    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS if rt.shows(d.key, d.module)]
+    entities.append(StatusSensor(rt))
     entities.append(OperatingModeSensor(rt))
     entities.append(GridStatusSensor(rt))
-    entities += [ModeReserveSensor(rt, mid, m.get("name", str(mid))) for mid, m in _mode_types(rt).items()]
-    for dev in rt.device_ids:
-        entities += [AgateSensor(rt, d, dev) for d in APOWER_SENSORS]
+    if rt.modbus is not None:
+        entities.append(DataSourceSensor(rt))
+        entities += [AgateSensor(rt, d) for d in MODBUS_SENSORS]
+    if rt.source != SOURCE_MODBUS:
+        entities.append(ModulesSensor(rt))
+        entities += [ModeReserveSensor(rt, mid, m.get("name", str(mid))) for mid, m in _mode_types(rt).items()]
+        for dev in rt.device_ids:
+            entities += [AgateSensor(rt, d, dev) for d in APOWER_SENSORS]
     async_add_entities(entities)
