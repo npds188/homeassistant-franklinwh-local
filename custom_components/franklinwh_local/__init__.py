@@ -18,6 +18,7 @@ from .const import (
     CONF_SERIAL,
     CONF_SOURCE,
     DEFAULT_MODBUS_INTERVAL,
+    DOMAIN,
     SOURCE_DIRECT,
     SOURCE_FALLBACK,
     SOURCE_MODBUS,
@@ -110,6 +111,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         source=source,
         modbus=modbus_coord,
     )
+    # Several aGates configured: add the short serial to device names so they're distinguishable.
+    # (Existing entity IDs are kept; HA only derives entity IDs from names on first registration.)
+    if len(hass.config_entries.async_entries(DOMAIN, include_ignore=False)) > 1:
+        entry.runtime_data.label = entry.runtime_data.serial[-6:]
+        _relabel_others(hass, entry)
     # Register the aGate first so aPower devices can link to it by registry id.
     agate = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **agate_device(entry.runtime_data))
     entry.runtime_data.agate_device_id = agate.id
@@ -127,6 +133,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> boo
         if reg_entry.unique_id in stale:
             ent_reg.async_remove(reg_entry.entity_id)
     return True
+
+
+def _relabel_others(hass: HomeAssistant, entry: ConfigEntry | None) -> None:
+    """Reload other loaded aGates whose device names don't match the current aGate count."""
+    entries = hass.config_entries.async_entries(DOMAIN, include_ignore=False)
+    want_label = len(entries) > 1
+    for other in entries:
+        if entry is not None and other.entry_id == entry.entry_id:
+            continue
+        rt = getattr(other, "runtime_data", None)
+        if isinstance(rt, AgateRuntime) and bool(rt.label) != want_label:
+            hass.config_entries.async_schedule_reload(other.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: AgateConfigEntry) -> None:
+    """Back to a single aGate: give the remaining one its plain device name again."""
+    _relabel_others(hass, entry)
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: AgateConfigEntry) -> None:
