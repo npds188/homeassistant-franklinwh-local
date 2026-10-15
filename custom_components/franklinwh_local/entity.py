@@ -47,7 +47,8 @@ def agate_device(rt: AgateRuntime) -> DeviceInfo:
         identifiers={(DOMAIN, rt.serial)},
         manufacturer=MANUFACTURER,
         model="aGate",
-        name="FranklinWH aGate (local)",
+        # With one aGate: "FranklinWH aGate (local)". With several, the short serial tells them apart.
+        name=f"FranklinWH aGate {rt.label} (local)" if rt.label else "FranklinWH aGate (local)",
         serial_number=rt.serial,
         sw_version=ident.get("IBG_VER") or (ident.get("modbus") or {}).get("version"),
         hw_version=str(ident.get("SyHdVersion", "")) or None,
@@ -61,7 +62,8 @@ def apower_device(rt: AgateRuntime, dev_id: int) -> DeviceInfo:
         identifiers={(DOMAIN, serial)},
         manufacturer=MANUFACTURER,
         model="aPower",
-        name=f"FranklinWH aPower {dev_id} (local)",
+        name=f"FranklinWH aPower {dev_id} – aGate {rt.label} (local)" if rt.label
+        else f"FranklinWH aPower {dev_id} (local)",
         serial_number=rt.device_serials.get(dev_id) or None,
         sw_version=at(bms, dev_id - 1) if isinstance(bms, list) else None,
         via_device_id=rt.agate_device_id,

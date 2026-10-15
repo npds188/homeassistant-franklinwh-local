@@ -296,6 +296,8 @@ class AgateRuntime:
     static: AgateCoordinator
     coordinators: list[AgateCoordinator] = field(default_factory=list)
     agate_device_id: str | None = None
+    # Set when more than one aGate is configured: short serial added to device names
+    label: str = ""
     # Optional modules -> ModuleStatus (see modules.py)
     modules: dict[str, Any] = field(default_factory=dict)
     # Configured data source (const SOURCE_*) and the Modbus coordinator, if Modbus is in use

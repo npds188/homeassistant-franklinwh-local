@@ -178,7 +178,9 @@ heavily.
   the mode programme — the integration reads the real mode separately, so *Operating mode*
   stays correct.
 - **Reserve SOC** is read-only here: there is no known local write.
-- Only one aGate per config entry; multiple aPowers are supported (one device each).
+- **Several aGates:** add the integration once per aGate (each by its own IP). With more than
+  one, device names include the aGate's short serial, e.g. *FranklinWH aGate 170129 (local)*.
+  Not yet tested with two aGates. Multiple aPowers are supported (one device each).
 
 Protocol details and the field meanings this integration relies on are in
 [PROTOCOL.md](PROTOCOL.md).
