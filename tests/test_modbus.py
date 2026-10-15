@@ -57,24 +57,35 @@ def regs_714(dcw=-1100):
     return c
 
 
-def regs_vendor(home=1500):
+def regs_vendor(home=1500, solar=2800):
     v = [0] * mb.VENDOR_LEN
-    v[6], v[7], v[8], v[10], v[11] = home, 2, 20, 322, 59190
+    v[2], v[6], v[7], v[8], v[10], v[11] = solar, home, 2, 20, 322, 59190
     return v
 
 
+def regs_502(solar=2800, w_sf=0):
+    r = [0] * mb.M502_LEN
+    r[mb.M502["W_SF"]], r[mb.M502["OutPw"]] = u16(w_sf), u16(solar)
+    return r
+
+
 class FakeModbus(mb.AgateModbus):
-    def __init__(self, home=1500, fail=False, w=-250, dcw=-1100):
+    def __init__(self, home=1500, fail=False, w=-250, dcw=-1100, solar=2800, model_502=True, vendor_solar=None):
         super().__init__("test")
-        self.w, self.dcw = w, dcw
-        self.models = {1: 40002, 701: 40070, 713: 41033, 714: 41042}
-        self.home, self.fail, self.reads = home, fail, 0
+        self.w, self.dcw, self.solar = w, dcw, solar
+        self.vendor_solar = solar if vendor_solar is None else vendor_solar
+        self.models = {1: 40002, 701: 40070, 713: 41033, 714: 41042, **({502: 41096} if model_502 else {})}
+        self.home, self.fail, self.reads, self.ranges = home, fail, 0, []
 
     async def read_many(self, ranges):
         self.reads += 1
+        self.ranges = ranges
         if self.fail:
             raise mb.ModbusError("unreachable")
-        return [regs_701(self.w), regs_713(), regs_714(self.dcw), regs_vendor(self.home)]
+        out = [regs_701(self.w), regs_713(), regs_714(self.dcw), regs_vendor(self.home, self.vendor_solar)]
+        if len(ranges) > 4:
+            out.append(regs_502(self.solar))
+        return out
 
 
 class DeadDirect:
@@ -96,7 +107,6 @@ def coord(client, source, modbus):
     c.modbus, c.source = modbus, source
     c.active_source = "modbus" if source == "modbus" else "direct"
     c.fallback_count, c.last_fallback = 0, None
-    c.generator_possible = True
     c.programmes = lambda: [{"id": 79680, "name": "Self", "scheduling_type": 2},
                             {"id": 2718, "name": "Default", "scheduling_type": 1}]
     return c
@@ -122,9 +132,24 @@ async def main():
     check("decode: capacity via WH_SF", snap["capacity_wh"] == 13600 and snap["available_wh"] == 12240)
     check("decode: u64 lifetime counter", snap["lifetime_wh_injected"] == 4194902)
     check("decode: vendor solar lifetime u32", snap["solar_wh"] == 322 * 65536 + 59190)
-    check("decode: solar derived = home - grid - battery", snap["solar_power"] == 1500 + 250 + 1100)
-    night = await FakeModbus(home=1100, w=30, dcw=1110).snapshot()   # 1100 - 30 - 1110 < 0
-    check("decode: derived solar never negative", night["solar_power"] == 0.0)
+    # --- solar is the measured register, never derived ------------------------------------
+    check("solar: from SunSpec 502 OutPw", snap["solar_power"] == 2800)
+    f = FakeModbus(); await f.snapshot()
+    check("solar: model 502 range requested", (41096, mb.M502_LEN) in f.ranges)
+    unbalanced = await FakeModbus(home=1100, w=30, dcw=1030, solar=0).snapshot()   # balance leaves +40 W
+    check("solar: night with a 40 W imbalance reads 0 (no phantom solar)", unbalanced["solar_power"] == 0)
+    gen = await FakeModbus(home=1300, w=0, dcw=-30, solar=0).snapshot()   # generator supplying 1330 W
+    check("solar: generator output isn't counted as solar", gen["solar_power"] == 0)
+    no502 = await FakeModbus(model_502=False, vendor_solar=4900).snapshot()
+    check("solar: without model 502, vendor register 15502 is used", no502["solar_power"] == 4900)
+    check("solar: 502 W_SF applied", mb._scaled(mb._int16(u16(54)), mb._sf(u16(2))) == 5400)
+    class NoSolar(FakeModbus):
+        async def read_many(self, ranges):
+            out = await super().read_many(ranges)
+            out[4][mb.M502["OutPw"]] = 0x8000
+            return out
+    ns = await NoSolar().snapshot()
+    check("solar: 502 OutPw unavailable -> unknown (not derived)", ns["solar_power"] is None)
     check("decode: unimplemented scale factor -> None", mb._scaled(5, -32768) is None)
 
     life = {d.key: d.value_fn(snap) for d in MODBUS_SENSORS}
@@ -157,7 +182,7 @@ async def main():
     check("R2-1: _uint64 keeps 0, rejects all-ones",
           mb._uint64([0, 0, 0, 0]) == 0 and mb._uint64([0xFFFF] * 4) is None)
     check("sentinel: unavailable scale factor -> None", bad["temp_ambient"] is None and bad["temp_cabinet"] is None)
-    check("sentinel: no derived solar from unavailable inputs", "solar_power" not in bad)
+    check("sentinel: solar register unaffected by other unavailable inputs", bad["solar_power"] == 2800)
     check("sentinel: good readings in the same reply still decode", bad["battery_power"] == -1100)
     life_bad = {d.key: d.value_fn(bad) for d in MODBUS_SENSORS}
     check("sentinel: lifetime sensors read unknown, not huge totals",
@@ -216,12 +241,8 @@ async def main():
     check("shape: vendor mode 2 (self) -> programme 79680", flow["mode"] == 79680 and flow["mode_type"] == 2)
     check("shape: no daily counters invented", "kwh_uti_in" not in flow)
     off = {**snap, "conn_state": 0}
-    check("shape: grid disconnected + generator possible -> solar unknown (could be generator)",
-          to_fast_data(off, None, [])[CMD_POWER_FLOW]["p_sun"] is None)
-    check("shape: grid disconnected, no generator module -> derived solar kept",
-          to_fast_data(off, None, [], generator_possible=False)[CMD_POWER_FLOW]["p_sun"] == snap["solar_power"])
-    check("shape: grid connected -> derived solar kept even with a generator",
-          to_fast_data(snap, None, [])[CMD_POWER_FLOW]["p_sun"] == snap["solar_power"])
+    check("shape: measured solar passes through with the grid disconnected",
+          to_fast_data(off, None, [])[CMD_POWER_FLOW]["p_sun"] == 2800)
     for conn, want in ((1, 1), (0, 0), (None, None)):
         got = to_fast_data({**snap, "conn_state": conn}, None, [])[CMD_RUN_STATUS]["mainRelay1Status"]
         check(f"R2-2: ConnSt {conn} -> relay status {want}", got == want)

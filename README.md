@@ -26,27 +26,11 @@ generator.
 > split-phase systems, multiple aPowers and generator auto-start are untested — issues
 > with your diagnostics are welcome.
 
-## Security — read this first
+## Security
 
-The aGate's local interface has **no authentication**. Anything on your network that can
-reach the aGate on **TCP port 9000** can read it *and* control it — change the battery mode,
-switch smart circuits, change generator settings, go off-grid and more. The message encoding
-is obfuscation, not encryption: its key is derived from the gateway serial, which the aGate
-reports to anyone who asks. The Hotspot/Bluetooth password does not protect this listener.
-This is how the aGate firmware works, not something this integration adds, and the protocol
-is already public; but please treat the aGate as an unprotected control endpoint:
-
-- **Put the aGate on its own VLAN** and allow **only your Home Assistant host** to reach it on
-  TCP 9000 (plus outbound internet if you still use the FranklinWH app/cloud). A firewall rule
-  alone does not help on a flat network: devices on the same subnet reach each other directly.
-- Never expose port 9000 to the internet (no port forwarding).
-- If FranklinWH has enabled **Modbus (TCP 502)** on your aGate, the same applies to it: its
-  SunSpec map includes writable grid-control models (enter service, power limits, DER
-  controls), also unauthenticated. This integration only ever sends Modbus *read* requests
-  (function 3), but anything else on your network could write. Allow only Home Assistant to
-  reach TCP 502 as well.
-- Home Assistant becomes a control point for the aGate — keep its accounts and remote access
-  secured.
+The aGate's local ports — **TCP 9000** (Direct Connect) and, if enabled, **TCP 502**
+(Modbus) — have **no authentication**: anything on your local network can reach them, and
+port 9000 allows control. **Never open these ports to the internet** (no port forwarding).
 
 ## What you get
 
@@ -115,7 +99,7 @@ The aGate has two local interfaces:
   energy, and all the controls. This integration always uses it as the main source.
 - **SunSpec Modbus TCP** (port 502) — FranklinWH's **official** read interface, a published
   standard. It has the core readings and lifetime energy totals, but no generator, circuits,
-  cells, mode names or controls, and battery power only in 100 W steps.
+  cells, mode names or controls, and battery and solar power only in 100 W steps.
 
 Because Direct Connect is undocumented, a firmware update could change or block it. Modbus
 is the safety net: if Direct Connect stops answering, the core readings (power flow, SOC,
@@ -144,34 +128,24 @@ reset at midnight), **Battery energy available**, **Battery capacity** and **aGa
 temperature**, plus a **Data source** diagnostic sensor showing which source fed the last
 reading and how many times it fell back.
 
-Modbus has no live solar register that can be trusted (it reads the inverters' standby draw
-as production at night), so while on Modbus solar power is derived from home − grid −
-battery and never negative — within about 1% of Direct Connect in daylight. Modbus has no
-generator reading either, so with the grid down and a generator possibly running, solar
-reads *unknown* rather than counting generator power as solar. Daily energy sensors read
-*unknown* while on Modbus and resume afterwards.
+While on Modbus, solar power comes from the aGate's own solar measurement (SunSpec model 502
+*OutPw*, the same value as FranklinWH register 15502). It's in 100 W steps and rounded down,
+so it reads up to 99 W below Direct Connect, and below 100 W it reads 0. It measures the
+solar input only, so generator power is never counted as solar. Modbus has no generator
+reading, so generator power and state read *unknown* while on Modbus. Daily energy sensors
+also read *unknown* while on Modbus and resume afterwards.
 
 ### Optional modules
 
-The Generator module and the Smart Circuits module are optional extras. Setup has a
-**Modules** step showing what was detected; each module can be set to **Auto-detect**,
-**Installed** or **Not installed**. Entities for modules that aren't installed are not
-created (and are removed if a module is later set to Not installed).
+The Generator and Smart Circuits modules are detected automatically; setup shows what was
+found and lets you override each one (*Installed* / *Not installed*). Entities for modules
+that aren't installed aren't created. Optionally, your FranklinWH account can be used to
+check the module list at startup (polling and control stay local). The **Installed modules**
+diagnostic sensor shows the result.
 
-- **Auto-detect (local)** — Generator: the aGate reports the generator enabled or in any
-  state other than *disabled*. Smart Circuits: the aGate reports a Smart Load firmware
-  version. These signals are based on one aGate that has both modules — if detection is
-  wrong on yours, use the override (and please open an issue with the *Installed modules*
-  sensor's attributes).
-- **Cloud check (optional)** — tick *Check modules with my FranklinWH account* and enter
-  your FranklinWH app login to use FranklinWH's own accessory list. It's only contacted when
-  the integration starts or reloads; polling and control stay local. The password is stored
-  in Home Assistant's config. If the cloud can't be reached, local detection is used.
-- The diagnostic sensor **Installed modules** shows the result and how each was decided.
+### Options
 
-**Configure** (on the integration) sets the polling intervals:
-
-Configure also changes the module settings above.
+**Configure** on the integration changes the data source, modules and polling intervals:
 
 | Option | Default | Range |
 |---|---|---|
@@ -179,7 +153,7 @@ Configure also changes the module settings above.
 | Battery cells, generator, circuits, faults | 60 s | 10–3600 s |
 | Modes, reserves and settings | 900 s | 60–86400 s |
 
-The aGate refreshes its live values about every 2 s, so polling faster than that gains nothing.
+The aGate refreshes its live values about every 2 s, so polling faster gains nothing.
 
 ## Running alongside the cloud integration
 
@@ -212,27 +186,13 @@ Protocol details and the field meanings this integration relies on are in
 
 ## Development
 
-`tests/live_entities.py` builds every entity against a live aGate using the
-`homeassistant` package (no running HA needed):
+Tests need only the `homeassistant` package (no running HA). The `test_*.py` files run
+offline against fakes; `live_entities.py` reads a real aGate (read-only, never writes).
 
 ```bash
 python -m venv venv && venv/bin/pip install homeassistant
-venv/bin/python tests/live_entities.py <aGate IP>
-```
-
-It only reads; it never sends a write.
-
-`SOURCE=modbus` or `SOURCE=direct` runs it for the other data sources (default: fallback).
-`tests/test_modbus.py` checks Modbus decoding, the fallback switching and the setup-time
-Modbus check offline.
-`tests/test_modules.py` checks module detection offline (local signals, cloud, overrides).
-`tests/test_review_fixes.py` runs offline against a fake aGate (no device needed) and checks
-the write-path safety rules: error replies and incomplete blocks are never written back,
-generator checks run on the freshly read settings, and failed polls make entities
-unavailable.
-
-```bash
-venv/bin/python tests/test_review_fixes.py
+for t in tests/test_*.py; do venv/bin/python "$t"; done
+venv/bin/python tests/live_entities.py <aGate IP>      # SOURCE=modbus or SOURCE=direct for other modes
 ```
 
 ## Credits

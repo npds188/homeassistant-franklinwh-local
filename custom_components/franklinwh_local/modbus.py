@@ -29,8 +29,10 @@ M713 = {"WHRtg": 2, "WHAvail": 3, "SoC": 4, "SoH": 5, "Sta": 6, "WH_SF": 7, "Pct
 M713_LEN = 9
 M714 = {"DCW": 6, "DCWhInj": 7, "DCWhAbs": 11, "DCW_SF": 17, "DCWH_SF": 18}
 M714_LEN = 19
+M502 = {"W_SF": 4, "OutPw": 23}      # Solar Module: PV output power (100 W resolution on the aGate)
+M502_LEN = 24
 # FranklinWH vendor registers (outside the SunSpec chain)
-VENDOR_BASE, VENDOR_LEN = 15500, 14   # 15506 home W, 15507 mode, 15508 reserve %, 15510-11 solar Wh (u32)
+VENDOR_BASE, VENDOR_LEN = 15500, 14   # 15502 solar W, 15506 home W, 15507 mode, 15508 reserve %, 15510-11 solar Wh (u32)
 MODE_TYPE = {1: 3, 2: 2, 3: 1}        # vendor mode (1 backup, 2 self, 3 TOU) -> scheduling_type
 
 
@@ -173,8 +175,10 @@ class AgateModbus:
         if not self.models:
             await self.discover()
         m = self.models
-        a, b, c, v = await self.read_many([(m[701], M701_LEN), (m[713], M713_LEN), (m[714], M714_LEN),
-                                           (VENDOR_BASE, VENDOR_LEN)])
+        ranges = [(m[701], M701_LEN), (m[713], M713_LEN), (m[714], M714_LEN), (VENDOR_BASE, VENDOR_LEN)]
+        if 502 in m:
+            ranges.append((m[502], M502_LEN))
+        a, b, c, v, *pv = await self.read_many(ranges)
         sf = lambda regs, key: _sf(regs[key])  # noqa: E731
         u64 = lambda regs, key: _uint64(regs[key:key + 4])  # noqa: E731
         w = _scaled(_int16(a[M701["W"]]), sf(a, M701["W_SF"]))
@@ -205,7 +209,13 @@ class AgateModbus:
             "reserve": float(reserve) if reserve is not None else None,
             "solar_wh": float(solar_wh) if solar_wh is not None else None,
         }
-        # No usable live solar register: derive it from the power balance, never negative.
-        if None not in (home, w, dcw):
-            out["solar_power"] = max(0.0, home - w - dcw)
+        # Live solar is measured by the aGate: SunSpec 502 OutPw, else the vendor register 15502
+        # (the same value). Not derived from home - grid - battery: that shows phantom watts at
+        # night and would count generator output as solar.
+        if pv:
+            solar = _scaled(_int16(pv[0][M502["OutPw"]]), sf(pv[0], M502["W_SF"]))
+        else:
+            vendor = _uint16(v[2])
+            solar = float(vendor) if vendor is not None else None
+        out["solar_power"] = max(0.0, solar) if solar is not None else None
         return out

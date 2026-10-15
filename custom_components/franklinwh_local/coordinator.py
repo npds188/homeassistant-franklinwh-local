@@ -78,20 +78,14 @@ async def resolve_mode(client: AgateClient, reply: dict[str, Any], ids: set[int]
 
 
 def to_fast_data(snap: dict[str, Any], previous: AgateData | None,
-                 programmes: list[dict[str, Any]], generator_possible: bool = True) -> AgateData:
+                 programmes: list[dict[str, Any]]) -> AgateData:
     """Shape a Modbus snapshot like the Direct Connect fast tier (1301 / 1707 replies).
 
     Only the fields Modbus has are filled; entities for the rest read as unknown while
     Modbus is the source. The operating mode becomes a programme id via the mode list
     (keeping the last id if it's the same mode type), and mode_type is kept as a fallback.
-
-    Modbus has no generator reading, and solar is derived as home - grid - battery, so
-    while a generator could be supplying power (grid disconnected and a generator possibly
-    installed) the derived figure would include it: solar is left unknown then.
     """
     solar = snap.get("solar_power")
-    if generator_possible and snap.get("conn_state") != 1:
-        solar = None
     flow: dict[str, Any] = {
         "source": "modbus", "p_uti": snap.get("grid_power"), "p_load": snap.get("home_power"),
         "p_fhp": snap.get("battery_power"), "p_sun": solar, "soc": snap.get("soc"),
@@ -156,7 +150,6 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
         self.fallback_count = 0
         self.last_fallback: str | None = None
         self.programmes: Any = lambda: []   # set by setup: current mode list (for Modbus)
-        self.generator_possible = True      # set by setup: False only if no generator module
 
     @callback
     def async_publish_reply(self, key: Any, reply: dict[str, Any]) -> None:
@@ -192,7 +185,7 @@ class AgateCoordinator(DataUpdateCoordinator[AgateData]):
             snap = await self.modbus.snapshot()
         except ModbusError as err:
             raise UpdateFailed(f"Modbus failed ({err})" + (f" after Direct Connect failed ({cause})" if cause else "")) from err
-        return to_fast_data(snap, self.data, self.programmes(), self.generator_possible)
+        return to_fast_data(snap, self.data, self.programmes())
 
     async def _poll_direct(self) -> AgateData:
         data: AgateData = {}
@@ -370,8 +363,6 @@ def build_coordinators(
     static = AgateCoordinator(
         hass, entry, client, "static", static_s, STATIC_CMDS, STATIC_DEVICE_CMDS, device_ids, partial_ok=True
     )
-    # Modbus has no generator reading; with Modbus only, modules are unknown so assume one may exist.
-    fast.generator_possible = generator or source == SOURCE_MODBUS
     # Modbus has the operating mode type only; name it via the mode list when we have one.
     fast.programmes = lambda: ((config.data or {}).get(CMD_MODE_LIST) or {}).get("list") or []
     return fast, detail, config, static

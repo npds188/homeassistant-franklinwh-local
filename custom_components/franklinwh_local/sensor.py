@@ -513,7 +513,7 @@ def agate_status(flow: dict[str, Any], run: dict[str, Any], offgrid_state: Any =
     if volts is not None and volts <= GRID_PRESENT_V:
         if battery > ACTIVE_W:
             return "Grid down – on battery"
-        # Solar unknown on Modbus while a generator might be supplying: don't guess.
+        # Solar unknown (e.g. no solar reading available): don't guess.
         return "Grid down – on solar" if (num(flow.get("p_sun")) or 0.0) > ACTIVE_W else "Grid down"
     if battery < -ACTIVE_W:
         return "Charging battery"
