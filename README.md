@@ -113,10 +113,9 @@ fixed. It switches back by itself when Direct Connect answers again.
 | **Direct Connect only** | Everything over Direct Connect; Modbus is never contacted. |
 | **Modbus only (read-only)** | Core readings and lifetime energy only — no controls, no battery cells, generator, circuits, daily energy or mode names. |
 
-**Getting Modbus enabled:** it's off by default on AU/NZ aGates. Ask **FranklinWH support
-directly** (in AU/NZ: info-au@franklinwh.com) to enable *local SunSpec Modbus TCP
-monitoring* for your aGate, giving its serial number — installers may not know how. US
-aGates often have it on already (it's used by SPAN panels).
+**Getting Modbus enabled:** it's off by default on AU/NZ aGates. Ask your installer or
+FranklinWH support to enable *local SunSpec Modbus TCP monitoring* for your aGate, and
+mention it's for Home Assistant. US aGates often have it on already (it's used by SPAN panels).
 
 Setup checks Modbus: with the backup selected and Modbus not answering, setup carries on
 with Direct Connect only and says so; you can turn the backup on later under **Configure**,
