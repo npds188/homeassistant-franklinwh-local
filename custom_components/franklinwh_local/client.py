@@ -171,6 +171,8 @@ class AgateClient:
         rejected). If circuits 1 and 2 are merged (SwMerge=1) both are switched.
         Returns the circuits that were targeted.
         """
+        # Adapted from david2069/franklinwh-direct-connect-api (MIT, (c) 2026 david2069);
+        # see THIRD_PARTY_NOTICES.md in this folder.
         if circuit not in (1, 2, 3):
             raise ValueError(f"circuit must be 1, 2 or 3, not {circuit!r}")
         block = await self._read_block(1409, ("SwMerge",))
@@ -199,6 +201,8 @@ class AgateClient:
 
     # Generator settings the app writes (cmd 1901). mode: 1 = Auto Schedule, 2 = Manual
     # (verified against the app 2026-10-13). manuSw: 2 = run, 1 = stop (Manual mode only).
+    # Generator writes: adapted from david2069/franklinwh-direct-connect-api (MIT, (c) 2026
+    # david2069); see THIRD_PARTY_NOTICES.md in this folder.
     GENERATOR_WRITABLE = (
         "mode", "manuSw", "genStartElec", "genCloseElec",
         "charge1En", "charge1StartTime", "charge1EndTime",
