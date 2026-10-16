@@ -1,6 +1,8 @@
 # Third-party notices
 
-FranklinWH Local is MIT-licensed (see [LICENSE](LICENSE)). It includes code adapted from the
+FranklinWH Local is MIT-licensed (see [LICENSE](LICENSE)). An identical copy of this file ships
+inside the integration folder (`custom_components/franklinwh_local/THIRD_PARTY_NOTICES.md`),
+so it travels with HACS and manual installs. It includes code adapted from the
 project below, which is used under its own MIT licence.
 
 ## franklinwh-direct-connect-api — david2069
