@@ -49,8 +49,11 @@ port 9000 allows control. **Never open these ports to the internet** (no port fo
 
 ### Controls
 
-All controls write to the aGate locally and **confirm the change by reading it back**;
-if the aGate doesn't apply it, Home Assistant shows an error instead of a wrong state.
+All controls write to the aGate locally. Mode, smart-circuit and generator *setting* changes
+are **confirmed by reading them back**; if the aGate doesn't apply one, Home Assistant shows
+an error instead of a wrong state. Generator **Run / Stop** is different: the aGate accepting
+the command is confirmed, but the generator actually starting or stopping is not. Watch
+*Generator state* or *Status* for that.
 
 - **Operating mode** — Time of Use / Self Consumption / Emergency Backup (≈2 s). If your
   aGate has more than one Time-of-Use programme (e.g. your tariff plus "Default"), Time of
@@ -95,11 +98,14 @@ aGate's IP address (port 9000). The aGate's serial number is read automatically.
 The aGate has two local interfaces:
 
 - **Direct Connect** (TCP 9000) — the FranklinWH app's own interface. Undocumented, but it
-  has everything: exact live readings, generator and smart circuits, cells, modes, daily
-  energy, and all the controls. This integration always uses it as the main source.
-- **SunSpec Modbus TCP** (port 502) — FranklinWH's **official** read interface, a published
-  standard. It has the core readings and lifetime energy totals, but no generator, circuits,
-  cells, mode names or controls, and battery and solar power only in 100 W steps.
+  carries the widest set of what this integration offers: exact live readings, generator and
+  smart circuits, cells, modes, daily energy, and all of its controls. It's the main source
+  unless you choose Modbus only.
+- **SunSpec Modbus TCP** (port 502) — FranklinWH's **official** interface, a published
+  standard. This integration only reads it (the aGate also exposes writable SunSpec controls,
+  which this integration never uses). It provides the core readings and lifetime energy
+  totals, but no generator, circuits, cells or mode names, and battery and solar power only
+  in 100 W steps.
 
 Because Direct Connect is undocumented, a firmware update could change or block it. Modbus
 is the safety net: if Direct Connect stops answering, the core readings (power flow, SOC,
@@ -107,11 +113,17 @@ grid voltage/current/frequency, grid status, operating mode) carry on from Modbu
 same entities, so outage alerts, power-flow cards and automations keep working until it's
 fixed. It switches back by itself when Direct Connect answers again.
 
+Limits of the backup: it covers the core readings while Home Assistant is running.
+Generator, circuit, cell and daily-energy entities, and all controls, still need Direct
+Connect. Setting up or restarting the integration also needs Direct Connect once; if Home
+Assistant restarts while Direct Connect is down, the integration keeps retrying until it
+answers (or switch the data source to *Modbus only* in the meantime).
+
 | Source | What you get |
 |---|---|
 | **Direct Connect, Modbus backup** (default, recommended) | Everything over Direct Connect, Modbus lifetime energy sensors, and Modbus takes over the core readings if Direct Connect fails. Modbus is read every 30 s (lifetime totals), and every poll only while Direct Connect is failing. |
 | **Direct Connect only** | Everything over Direct Connect; Modbus is never contacted. |
-| **Modbus only (read-only)** | Core readings and lifetime energy only — no controls, no battery cells, generator, circuits, daily energy or mode names. |
+| **Modbus only (read-only)** | Core readings and lifetime energy only — no controls (this integration doesn't write over Modbus), no battery cells, generator, circuits, daily energy or mode names. |
 
 **Getting Modbus enabled:** it's off by default on AU/NZ aGates. Ask your installer or
 FranklinWH support to enable *local SunSpec Modbus TCP monitoring* for your aGate, and
