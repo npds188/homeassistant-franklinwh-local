@@ -204,10 +204,14 @@ venv/bin/python tests/live_entities.py <aGate IP>      # SOURCE=modbus or SOURCE
   and [richo/franklinwh-python](https://github.com/richo/franklinwh-python): the FranklinWH
   cloud integration and library this work started from, including the cloud message format
   that the local protocol reuses and the smart-circuit switching recipe.
-- **david2069** — [david2069/franklinwh-direct-connect-api](https://github.com/david2069/franklinwh-direct-connect-api)
-  and [franklinwh-direct-connect-bridge](https://github.com/david2069/franklinwh-direct-connect-bridge):
-  the local command catalog, per-device battery reads, and the operating-mode and generator
-  write recipes, hardware-verified on an aGate X.
+- **david2069** — [franklinwh-direct-connect-api](https://github.com/david2069/franklinwh-direct-connect-api)
+  ([PyPI](https://pypi.org/project/franklinwh-direct-connect-api/),
+  [docs](https://david2069.github.io/franklinwh-direct-connect-api/)) and
+  [franklinwh-direct-connect-bridge](https://github.com/david2069/franklinwh-direct-connect-bridge):
+  the Direct Connect work here builds on his library and research: the local command catalog,
+  per-device battery reads, and the operating-mode and generator write recipes,
+  hardware-verified on an aGate X. The smart-circuit and generator write code is adapted from
+  his library under the MIT licence; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **voidstarr** — [voidstarr/franklinwh_local](https://github.com/voidstarr/franklinwh_local):
   first published the per-serial key used by the Direct Connect byte encoding.
 
