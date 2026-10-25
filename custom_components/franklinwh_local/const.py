@@ -30,6 +30,7 @@ MODULE_ENTITY_KEYS = {
     }),
     MOD_CIRCUITS: frozenset({
         "circuit_voltage", "circuit_1_power", "circuit_2_power",
+        "circuit_1_current", "circuit_2_current", "circuit_1_energy", "circuit_2_energy",
         *(f"smart_circuit_{n}" for n in (1, 2, 3)),
         *(f"smart_circuit_{n}_switch" for n in (1, 2, 3)),
     }),

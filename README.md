@@ -41,7 +41,7 @@ port 9000 allows control. **Never open these ports to the internet** (no port fo
 | **Energy today** | every 5 s | Solar, grid import, grid export, home, battery charged/discharged — ready for the Energy dashboard |
 | **Grid** | every 5 s | Voltage, current, frequency, Grid available, Grid status (Normal / Grid down / Off-grid), relay states |
 | **Operating mode** | every 5 s | Current mode, **control** (Time of Use / Self Consumption / Emergency Backup) |
-| **Smart circuits** | every 5 s | Relay state per circuit, **on/off switch** per circuit |
+| **Smart circuits** | 5 s / 60 s | Relay state per circuit, **on/off switch** per circuit; power, current and lifetime energy for circuits 1 and 2, and circuit voltage |
 | **Generator** | 5 s / 60 s | State (standby / starting / running / quit / error / exercising), running, power, voltage, frequency, current; **controls** below |
 | **Battery (per aPower)** | every 60 s | Health (SoH), pack voltage, highest/lowest/spread cell voltage, cell temperatures (all 16 cells as attributes), aPower SOC, alarm level, inverter/DC bus details |
 | **Settings** | every 15 min | Reserve SOC for every mode, TOU schedule, solar reserve, grid export policy, off-grid settings |

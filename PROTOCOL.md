@@ -116,6 +116,22 @@ running a generator from it is not yet verified on this system.
 `smartRelayNStatus` in 1707 (≈1 s). Afterwards the aGate resets `MsgType` to 0 and
 recomputes `ProLoad` itself. If `SwMerge` is 1, circuits 1 and 2 are switched together.
 
+### Circuit metering (1411)
+Three meter blocks: `SW1*`, `SW2*` and `CarSW*`, each with power (`SW1ExpPower`,
+`SW2ExpPower`, `CarSWPower`, W), current (`SW1Curr`, `SW2Curr`, `CarSWCurr`, ÷10 A) and
+lifetime energy (`SW1ExpEnergy`, `SW2ExpEnergy`, `CarSWExpEnergy`, Wh), plus `Sw1Volt` /
+`Sw2Volt` (÷10 V). Which block is which circuit depends on the hardware, as in the app
+(`SupportFeatures.supportAustraliaVersion`):
+
+| aGate | Circuit 1 | Circuit 2 | `CarSW*` |
+|---|---|---|---|
+| `SyHdVersion` 102 and `protocolVer` ≥ V1.09.08 (Australia/NZ) | `CarSW*` (`SW1*` reads 0) | `SW2*` | circuit 1 |
+| anything else | `SW1*` (`SW1*` + `SW2*` if `SwMerge` = 1) | `SW2*` | V2L / car port |
+
+`SyHdVersion` and `protocolVer` come from the identity read (1101). Checked on an NZ aGate
+(102, V1.11.01): `CarSWPower` 2945 W and `CarSWExpEnergy` 211161 Wh matched the app's
+2.95 kW and 211.0 kWh for circuit 1.
+
 ### Grid (1707)
 `gridLineVol` ÷ 10 = line voltage (≈239 V on a 230 V single-phase site, where the per-leg
 `gridVol1/2` fields read ≈120 V). `gridCurr1` A, `gridFreq` Hz, `mainRelay1Status`,

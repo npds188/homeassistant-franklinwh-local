@@ -26,6 +26,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import AgateConfigEntry
 from .const import (
     CMD_BATTERY_CELLS,
+    CMD_SMART_CIRCUITS,
     CMD_CIRCUIT_METER,
     CMD_CONNECTIVITY,
     CMD_DEVICE_STATES,
@@ -48,7 +49,7 @@ from .const import (
     MODULE_ENTITY_KEYS,
     SOURCE_MODBUS,
 )
-from .coordinator import AgateRuntime
+from .coordinator import AgateRuntime, CounterGuard
 from .entity import AgateEntity, AgateEntityDescription, num
 
 W, KWH, V, A, HZ, C = (
@@ -157,22 +158,12 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
         value_fn=lambda d: d["dspRunstatus"], entity_category=DIAG,
         attrs_fn=_raw,
     ),
-    # --- detail: circuits / V2L (1411) ---
+    # --- detail: circuits / V2L (1411); circuit power/current/energy are CIRCUIT_SENSORS ---
     AgateSensorDescription(
         key="circuit_voltage", name="Smart circuit voltage", tier="detail", cmd=CMD_CIRCUIT_METER,
         value_fn=lambda d: num(d["Sw1Volt"], 0.1, 1),
         native_unit_of_measurement=V, device_class=SensorDeviceClass.VOLTAGE, state_class=MEAS,
         entity_category=DIAG, attrs_fn=_raw,
-    ),
-    AgateSensorDescription(
-        key="circuit_1_power", name="Smart circuit 1 power", tier="detail", cmd=CMD_CIRCUIT_METER,
-        value_fn=lambda d: num(d["SW1ExpPower"], digits=0),
-        native_unit_of_measurement=W, device_class=SensorDeviceClass.POWER, state_class=MEAS,
-    ),
-    AgateSensorDescription(
-        key="circuit_2_power", name="Smart circuit 2 power", tier="detail", cmd=CMD_CIRCUIT_METER,
-        value_fn=lambda d: num(d["SW2ExpPower"], digits=0),
-        native_unit_of_measurement=W, device_class=SensorDeviceClass.POWER, state_class=MEAS,
     ),
     AgateSensorDescription(
         key="v2l_power", name="V2L power", tier="detail", cmd=CMD_CIRCUIT_METER,
@@ -276,6 +267,93 @@ MODBUS_SENSORS: tuple[AgateSensorDescription, ...] = (
     ),
 )
 
+# --- Smart circuit metering (1411) ---------------------------------------------------------
+# 1411 has three meter blocks: SW1*, SW2* and CarSW*. Which one belongs to which circuit depends
+# on the hardware, mirroring the app (SmartSwitchModel.updateStatusFromOldEntity):
+#   * Australia/NZ aGate (SupportFeatures.supportAustraliaVersion: SyHdVersion 102 and protocolVer
+#     V1.09.08 or later): circuit 1 is metered in CarSW*; SW1* stays 0.
+#   * otherwise: circuit 1 is SW1* (SW1* + SW2* when circuits 1 and 2 are merged), and CarSW*
+#     is the V2L/car port.
+# Circuit 2 is SW2* on both.
+AU_HW_VERSION = 102
+AU_MIN_PROTOCOL = (1, 9, 8)
+CIRCUIT_FIELDS = {  # block -> (power W, current 0.1 A, lifetime energy Wh)
+    "SW1": ("SW1ExpPower", "SW1Curr", "SW1ExpEnergy"),
+    "SW2": ("SW2ExpPower", "SW2Curr", "SW2ExpEnergy"),
+    "CarSW": ("CarSWPower", "CarSWCurr", "CarSWExpEnergy"),
+}
+READINGS = {"power": 0, "current": 1, "energy": 2}
+
+
+def _version(text: Any) -> tuple[int, ...] | None:
+    """'V1.11.01' -> (1, 11, 1); None if it can't be read."""
+    try:
+        return tuple(int(part) for part in str(text).strip().lstrip("Vv").split("."))
+    except ValueError:
+        return None
+
+
+def au_circuit_layout(identity: dict[str, Any]) -> bool:
+    """True if circuit 1 is metered in the CarSW* fields (Australia/NZ aGate)."""
+    try:
+        hardware = int(identity.get("SyHdVersion"))
+    except (TypeError, ValueError):
+        return False
+    protocol = _version(identity.get("protocolVer"))
+    return hardware == AU_HW_VERSION and protocol is not None and protocol >= AU_MIN_PROTOCOL
+
+
+def circuit_blocks(circuit: int, au_layout: bool, merged: bool) -> tuple[str, ...]:
+    """Which 1411 meter blocks make up a circuit's reading (summed)."""
+    if circuit == 1:
+        if au_layout:
+            return ("CarSW",)
+        return ("SW1", "SW2") if merged else ("SW1",)
+    return ("SW2",)
+
+
+def circuit_reading(reply: dict[str, Any], reading: str, blocks: tuple[str, ...]) -> float | None:
+    """Power in W, current in A or lifetime energy in kWh, summed over the blocks."""
+    values = [num(reply.get(CIRCUIT_FIELDS[b][READINGS[reading]])) for b in blocks]
+    if any(v is None for v in values):
+        return None
+    total = sum(values)
+    if reading == "current":
+        return round(total / 10, 1)
+    if reading == "energy":
+        return round(total / 1000, 3)
+    return round(total)
+
+
+@dataclass(frozen=True, kw_only=True)
+class CircuitSensorDescription(AgateSensorDescription):
+    circuit: int
+    reading: str
+
+
+def _circuit(n: int, reading: str, name: str, **kw) -> CircuitSensorDescription:
+    return CircuitSensorDescription(
+        key=f"circuit_{n}_{reading}", name=f"Smart circuit {n} {name}", tier="detail", cmd=CMD_CIRCUIT_METER,
+        value_fn=lambda d: d, circuit=n, reading=reading, module=MOD_CIRCUITS,
+        # Circuit 2 is often unwired (its switch is disabled by default too); its power sensor predates these.
+        entity_registry_enabled_default=n == 1 or reading == "power", **kw,
+    )
+
+
+CIRCUIT_SENSORS: tuple[CircuitSensorDescription, ...] = tuple(
+    desc
+    for n in (1, 2)
+    for desc in (
+        _circuit(n, "power", "power", native_unit_of_measurement=W,
+                 device_class=SensorDeviceClass.POWER, state_class=MEAS),
+        _circuit(n, "current", "current", native_unit_of_measurement=A,
+                 device_class=SensorDeviceClass.CURRENT, state_class=MEAS),
+        _circuit(n, "energy", "energy lifetime", native_unit_of_measurement=KWH,
+                 device_class=SensorDeviceClass.ENERGY, state_class=TOTAL_INC),
+    )
+)
+
+
 # Entities that only exist when the optional module is installed.
 _MODULE_OF = {key: module for module, keys in MODULE_ENTITY_KEYS.items() for key in keys}
 GATEWAY_SENSORS = tuple(replace(d, module=_MODULE_OF.get(d.key)) for d in GATEWAY_SENSORS)
@@ -353,6 +431,41 @@ class AgateSensor(AgateEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self._value()
+
+
+class CircuitSensor(AgateEntity, SensorEntity):
+    """One smart circuit's power, current or lifetime energy from 1411, for either meter layout."""
+
+    entity_description: CircuitSensorDescription
+
+    def __init__(self, rt: AgateRuntime, description: CircuitSensorDescription) -> None:
+        super().__init__(rt, description)
+        self.au_layout = au_circuit_layout(rt.identity)
+        self._guard = CounterGuard((description.key,)) if description.reading == "energy" else None
+        self._attr_native_value = self._read()
+
+    @property
+    def blocks(self) -> tuple[str, ...]:
+        cfg = (self.rt.config.data or {}).get(CMD_SMART_CIRCUITS) or {}
+        return circuit_blocks(self.entity_description.circuit, self.au_layout, cfg.get("SwMerge") == 1)
+
+    def _read(self) -> float | None:
+        reply = self.reply
+        value = circuit_reading(reply, self.entity_description.reading, self.blocks) if reply else None
+        if self._guard is not None:
+            # A one-off low/0 lifetime reading would look like a meter reset to the Energy dashboard.
+            value = self._guard.apply({self.entity_description.key: value})[self.entity_description.key]
+        return value
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._attr_native_value = self._read()
+        super()._handle_coordinator_update()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"meter_fields": [CIRCUIT_FIELDS[b][READINGS[self.entity_description.reading]]
+                                 for b in self.blocks]}
 
 
 def _mode_types(rt: AgateRuntime) -> dict[int, dict[str, Any]]:
@@ -617,7 +730,11 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS if rt.shows(d.key, d.module)]
+    # On the AU/NZ layout CarSW* is smart circuit 1, so there is no separate V2L reading.
+    au_layout = au_circuit_layout(rt.identity)
+    entities: list[SensorEntity] = [AgateSensor(rt, d) for d in GATEWAY_SENSORS if rt.shows(d.key, d.module)
+                                    and not (au_layout and d.key == "v2l_power")]
+    entities += [CircuitSensor(rt, d) for d in CIRCUIT_SENSORS if rt.shows(d.key, d.module)]
     entities.append(StatusSensor(rt))
     entities.append(OperatingModeSensor(rt))
     entities.append(GridStatusSensor(rt))
