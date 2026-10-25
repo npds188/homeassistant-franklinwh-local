@@ -242,24 +242,25 @@ class CounterGuard:
       * lower again -> held back again, as a new candidate
     """
 
-    def __init__(self) -> None:
+    def __init__(self, fields: tuple[str, ...] = LIFETIME_FIELDS) -> None:
+        self.fields = fields
         self.last: dict[str, float] = {}
         self.pending: dict[str, float] = {}
 
     def apply(self, snap: dict[str, Any]) -> dict[str, Any]:
         out = dict(snap)
-        for key in LIFETIME_FIELDS:
+        for key in self.fields:
             value, last = out.get(key), self.last.get(key)
             if value is None:
                 continue
             pending = self.pending.get(key)
             if last is not None and value < last and (pending is None or value < pending):
                 self.pending[key] = value
-                _LOGGER.debug("Modbus %s went down (%s -> %s); holding back one poll", key, last, value)
+                _LOGGER.debug("%s went down (%s -> %s); holding back one poll", key, last, value)
                 out[key] = None
                 continue
             if pending is not None and value < last:
-                _LOGGER.info("Modbus %s reset confirmed (%s -> %s)", key, last, value)
+                _LOGGER.info("%s reset confirmed (%s -> %s)", key, last, value)
             self.pending.pop(key, None)
             self.last[key] = value
         return out
