@@ -40,7 +40,7 @@ port 9000 allows control. **Never open these ports to the internet** (no port fo
 | **Live power flow** | every 5 s | Solar, grid (plus import/export), home, battery (plus charge/discharge), generator power; battery SOC; aGate temperature |
 | **Energy today** | every 5 s | Solar, grid import, grid export, home, battery charged/discharged — ready for the Energy dashboard |
 | **Grid** | every 5 s | Voltage, current, frequency, Grid available, Grid status (Normal / Grid down / Off-grid), relay states |
-| **Operating mode** | every 5 s | Current mode, **control** (Time of Use / Self Consumption / Emergency Backup) |
+| **Operating mode** | every 5 s | Current mode, **control** (Time of Use / Self Consumption / Emergency Backup), Storm Hedge backup |
 | **Smart circuits** | 5 s / 60 s | Relay state per circuit, **on/off switch** per circuit; power, current and lifetime energy for circuits 1 and 2, and circuit voltage |
 | **Generator** | 5 s / 60 s | State (standby / starting / running / quit / error / exercising), running, power, voltage, frequency, current; **controls** below |
 | **Battery (per aPower)** | every 60 s | Health (SoH), pack voltage, highest/lowest/spread cell voltage, cell temperatures (all 16 cells as attributes), aPower SOC, alarm level, inverter/DC bus details |
@@ -66,8 +66,9 @@ the command is confirmed, but the generator actually starting or stopping is not
   - **Periods 1–3** — on/off plus start and end time (overlaps are rejected)
   - **Generator run / stop** buttons — Manual mode only, like the app's Run button
 
-Everything else is read-only. Battery reserve levels and Storm Hedge are **not** available
-locally — keep the cloud integration for those if you need them.
+Everything else is read-only. Battery reserve levels and Storm Hedge settings are **not**
+available locally — keep the cloud integration for those if you need them. You can still
+*see* when Storm Hedge has put the battery into backup (below).
 
 ## Requirements
 
@@ -189,6 +190,11 @@ heavily.
   the panels (about an hour later on one install), and it reports a status code instead of
   the mode programme — the integration reads the real mode separately, so *Operating mode*
   stays correct.
+- **Storm Hedge** runs in FranklinWH's cloud. While it holds the battery in backup, the aGate
+  reports status code 6 instead of the mode programme; *Operating mode* then shows
+  *Emergency Backup (storm)* and *Storm Hedge backup* turns on. The mode control keeps showing
+  your scheduled mode, which the aGate returns to when the storm ends. Seen on one install
+  (NZ, Nov 2026); Direct Connect only.
 - **Reserve SOC** is read-only here: there is no known local write.
 - **Several aGates:** add the integration once per aGate (each by its own IP). With more than
   one, device names include the aGate's short serial, e.g. *FranklinWH aGate 170129 (local)*.

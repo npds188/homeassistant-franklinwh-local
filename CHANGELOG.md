@@ -3,6 +3,18 @@
 Release notes for 0.2.2 and earlier are on the
 [GitHub releases page](https://github.com/npds188/homeassistant-franklinwh-local/releases).
 
+## 0.2.4
+
+### Added
+- **Storm Hedge backup** binary sensor: on while FranklinWH's Storm Hedge holds the battery in
+  backup. Direct Connect only; unknown while Modbus is the data source.
+- *Operating mode* shows **Emergency Backup (storm)** during Storm Hedge backup, with a
+  `storm_hedge_backup` attribute. Previously it showed the scheduled mode (e.g. Time of Use).
+
+How it works: during storm backup the aGate's power flow reports status code 6 instead of the
+mode programme. Seen on one NZ install, 6–7 Nov 2026. Storm Hedge settings stay in the
+FranklinWH app.
+
 ## 0.2.3
 
 ### Fixed
