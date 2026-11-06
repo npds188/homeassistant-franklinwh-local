@@ -25,7 +25,7 @@ from .const import (
     MOD_GENERATOR,
     MODULE_ENTITY_KEYS,
 )
-from .coordinator import AgateRuntime
+from .coordinator import MODE_CODE_STORM, AgateRuntime, mode_code
 from .entity import AgateEntity, AgateEntityDescription, num
 
 DIAG = EntityCategory.DIAGNOSTIC
@@ -60,6 +60,13 @@ BINARY_SENSORS: tuple[AgateBinaryDescription, ...] = (
         key="generator_running", name="Generator running", tier="fast", cmd=CMD_POWER_FLOW,
         value_fn=lambda d: int(d["genStat"]) in (2, 3, 6),  # starting / running / exercising
         device_class=BinarySensorDeviceClass.RUNNING,
+    ),
+    AgateBinaryDescription(
+        # Storm Hedge is cloud-driven; locally the power flow's mode becomes code 6 while it holds
+        # the battery in backup. Direct Connect only (None from Modbus).
+        key="storm_hedge_backup", name="Storm Hedge backup", tier="fast", cmd=CMD_POWER_FLOW,
+        value_fn=lambda d: None if d.get("source") == "modbus" else mode_code(d) == MODE_CODE_STORM,
+        icon="mdi:weather-lightning-rainy",
     ),
     AgateBinaryDescription(
         key="generator_enabled", name="Generator enabled", tier="detail", cmd=CMD_GENERATOR,

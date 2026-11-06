@@ -77,6 +77,29 @@ async def resolve_mode(client: AgateClient, reply: dict[str, Any], ids: set[int]
     return {**reply, "mode": running, "mode_raw": mode} if running in ids else reply
 
 
+# Status codes the power flow (1301) reports in `mode` instead of a programme id.
+MODE_CODE_STORM = 6    # Storm Hedge backup (seen 6-7 Nov 2026; 1403 still shows the scheduled programme)
+MODE_CODE_OFFGRID = 7  # off-grid (seen 15 Oct 2026)
+
+
+def mode_code(reply: dict[str, Any] | None, ids: set[int] | None = None) -> int | None:
+    """The status code from a power-flow reply, or None when `mode` is a programme id.
+
+    resolve_mode() keeps the code as mode_raw; if it couldn't (e.g. empty mode list) the code
+    is still in `mode`. Modbus replies have no code.
+    """
+    if not reply or reply.get("source") == "modbus":
+        return None
+    raw = reply.get("mode_raw", reply.get("mode"))
+    try:
+        raw = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if ids and raw in ids:
+        return None
+    return raw if raw in (MODE_CODE_STORM, MODE_CODE_OFFGRID) else None
+
+
 def to_fast_data(snap: dict[str, Any], previous: AgateData | None,
                  programmes: list[dict[str, Any]]) -> AgateData:
     """Shape a Modbus snapshot like the Direct Connect fast tier (1301 / 1707 replies).
