@@ -49,7 +49,7 @@ from .const import (
     MODULE_ENTITY_KEYS,
     SOURCE_MODBUS,
 )
-from .coordinator import MODE_CODE_STORM, AgateRuntime, CounterGuard, mode_code
+from .coordinator import AgateRuntime, CounterGuard, storm_backup
 from .entity import AgateEntity, AgateEntityDescription, num
 
 W, KWH, V, A, HZ, C = (
@@ -522,7 +522,7 @@ class OperatingModeSensor(AgateEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        if mode_code(self.reply, set(_mode_types(self.rt))) == MODE_CODE_STORM:
+        if storm_backup(self.reply, self.rt.programme_ids()):
             return STORM_BACKUP
         mode_id = self._value()
         info = _mode_types(self.rt).get(int(mode_id)) if mode_id is not None else None
@@ -543,7 +543,7 @@ class OperatingModeSensor(AgateEntity, SensorEntity):
                 # set when the power flow reports a status code instead of the programme
                 # (6 = Storm Hedge backup, 7 = off-grid)
                 "power_flow_mode_code": reply.get("mode_raw"),
-                "storm_hedge_backup": mode_code(reply, set(_mode_types(self.rt))) == MODE_CODE_STORM}
+                "storm_hedge_backup": storm_backup(self.reply, self.rt.programme_ids())}
 
 
 GRID_NORMAL, GRID_DOWN, GRID_OFF = "Normal", "Grid down", "Off-grid"

@@ -25,7 +25,7 @@ from .const import (
     MOD_GENERATOR,
     MODULE_ENTITY_KEYS,
 )
-from .coordinator import MODE_CODE_STORM, AgateRuntime, mode_code
+from .coordinator import AgateRuntime, storm_backup
 from .entity import AgateEntity, AgateEntityDescription, num
 
 DIAG = EntityCategory.DIAGNOSTIC
@@ -60,13 +60,6 @@ BINARY_SENSORS: tuple[AgateBinaryDescription, ...] = (
         key="generator_running", name="Generator running", tier="fast", cmd=CMD_POWER_FLOW,
         value_fn=lambda d: int(d["genStat"]) in (2, 3, 6),  # starting / running / exercising
         device_class=BinarySensorDeviceClass.RUNNING,
-    ),
-    AgateBinaryDescription(
-        # Storm Hedge is cloud-driven; locally the power flow's mode becomes code 6 while it holds
-        # the battery in backup. Direct Connect only (None from Modbus).
-        key="storm_hedge_backup", name="Storm Hedge backup", tier="fast", cmd=CMD_POWER_FLOW,
-        value_fn=lambda d: None if d.get("source") == "modbus" else mode_code(d) == MODE_CODE_STORM,
-        icon="mdi:weather-lightning-rainy",
     ),
     AgateBinaryDescription(
         key="generator_enabled", name="Generator enabled", tier="detail", cmd=CMD_GENERATOR,
@@ -108,6 +101,25 @@ class AgateBinarySensor(AgateEntity, BinarySensorEntity):
         return self._value()
 
 
+# Storm Hedge is cloud-driven; locally the power flow's mode becomes code 6 while it holds the
+# battery in backup. Direct Connect only (unknown while Modbus is the source).
+STORM_DESCRIPTION = AgateBinaryDescription(
+    key="storm_hedge_backup", name="Storm Hedge backup", tier="fast", cmd=CMD_POWER_FLOW,
+    value_fn=lambda d: d, icon="mdi:weather-lightning-rainy",
+)
+
+
+class StormBackupSensor(AgateBinarySensor):
+    """On while Storm Hedge holds the battery in backup (5 s), judged against the mode list."""
+
+    def __init__(self, rt: AgateRuntime) -> None:
+        super().__init__(rt, STORM_DESCRIPTION)
+
+    @property
+    def is_on(self) -> bool | None:
+        return storm_backup(self.reply, self.rt.programme_ids())
+
+
 def _circuit_name(rt: AgateRuntime, n: int) -> str:
     cfg = (rt.config.data or {}).get(CMD_SMART_CIRCUITS) or {}
     name = cfg.get(f"Sw{n}Name")
@@ -147,6 +159,8 @@ async def async_setup_entry(
 ) -> None:
     rt = entry.runtime_data
     entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS if rt.shows(d.key, d.module)]
+    if rt.shows(STORM_DESCRIPTION.key):
+        entities.append(StormBackupSensor(rt))
     if rt.has(MOD_CIRCUITS):
         entities += [SmartCircuitSensor(rt, n) for n in (1, 2, 3)]
     async_add_entities(entities)

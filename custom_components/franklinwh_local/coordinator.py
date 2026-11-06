@@ -100,6 +100,22 @@ def mode_code(reply: dict[str, Any] | None, ids: set[int] | None = None) -> int 
     return raw if raw in (MODE_CODE_STORM, MODE_CODE_OFFGRID) else None
 
 
+def storm_backup(reply: dict[str, Any] | None, ids: set[int] | None) -> bool | None:
+    """Is Storm Hedge holding the battery in backup? None when the reply can't tell.
+
+    Unknown for no reply, a Modbus reply (no status code) or a missing/unreadable mode;
+    otherwise True only for status code 6. `ids` are the known programme ids, so a real
+    programme numbered like a code isn't mistaken for one.
+    """
+    if not reply or reply.get("source") == "modbus":
+        return None
+    try:
+        int(reply.get("mode_raw", reply.get("mode")))
+    except (TypeError, ValueError):
+        return None
+    return mode_code(reply, ids) == MODE_CODE_STORM
+
+
 def to_fast_data(snap: dict[str, Any], previous: AgateData | None,
                  programmes: list[dict[str, Any]]) -> AgateData:
     """Shape a Modbus snapshot like the Direct Connect fast tier (1301 / 1707 replies).
@@ -327,6 +343,10 @@ class AgateRuntime:
     # Configured data source (const SOURCE_*) and the Modbus coordinator, if Modbus is in use
     source: str = SOURCE_DIRECT
     modbus: "ModbusCoordinator | None" = None
+
+    def programme_ids(self) -> set[int]:
+        """Programme ids from the mode list (config tier); empty until it has been read."""
+        return programme_ids(((self.config.data or {}).get(CMD_MODE_LIST) or {}).get("list") or [])
 
     def shows(self, key: str, module: str | None = None) -> bool:
         """Should an entity with this description key / module be created?"""
